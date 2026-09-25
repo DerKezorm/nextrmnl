@@ -6,6 +6,20 @@ Terminal do.
 
 nextrmnl is part of the nex apps and looks like them.
 
+## Screenshots
+
+![Terminal with the connection list pinned to the left](docs/screenshots/terminal.png)
+
+*The terminal, with the connection list pinned to the left. It floats above the terminal by default.*
+
+![Files next to the terminal](docs/screenshots/files.png)
+
+*Files over SFTP next to the terminal: browse, upload, download, rename, delete.*
+
+![The vault with keys and stored passwords](docs/screenshots/vault.png)
+
+*The vault: keys and stored passwords, sealed with the account's password.*
+
 ## What it does
 
 - **Terminal in the browser** (xterm.js) over a WebSocket to the nextrmnl server, which speaks SSH to your

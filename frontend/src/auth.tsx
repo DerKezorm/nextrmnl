@@ -8,16 +8,20 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import type { ReactNode } from 'react'
 
 import { ApiError, api, setSignedOutHandler } from './api/client'
-import type { Account, SetupState, VaultState } from './api/types'
+import type { Account, SecondFactorPending, SetupState, VaultState } from './api/types'
 
 export type AuthState = 'loading' | 'setup' | 'signed_out' | 'signed_in' | 'unreachable'
+/** What the password step ends with: signed in, or a second step with a code from the app. */
+export type SignInOutcome = 'signed_in' | 'second_factor'
 
 type Auth = {
   state: AuthState
   account: Account | null
   refresh: () => Promise<void>
   setup: (name: string, password: string) => Promise<void>
-  signIn: (name: string, password: string) => Promise<void>
+  signIn: (name: string, password: string) => Promise<SignInOutcome>
+  signInCode: (code: string) => Promise<void>
+  cancelSecondFactor: () => Promise<void>
   acceptInvite: (token: string, name: string, password: string) => Promise<void>
   signOut: () => Promise<void>
   setVault: (state: VaultState) => void
@@ -82,7 +86,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       account,
       refresh,
       setup: async (name, password) => signedIn(await api.post<Account>('/api/setup', { name, password })),
-      signIn: async (name, password) => signedIn(await api.post<Account>('/api/auth/login', { name, password })),
+      signIn: async (name, password) => {
+        const result = await api.post<Account | SecondFactorPending>('/api/auth/login', { name, password })
+        if ('second_factor' in result) return 'second_factor'
+        signedIn(result)
+        return 'signed_in'
+      },
+      signInCode: async (code) => signedIn(await api.post<Account>('/api/auth/login/totp', { code })),
+      cancelSecondFactor: async () => {
+        try {
+          await api.post('/api/auth/login/totp/cancel')
+        } catch {
+          // Nothing was pending any more; the sign-in page is shown either way.
+        }
+      },
       acceptInvite: async (token, name, password) =>
         signedIn(await api.post<Account>(`/api/invites/${encodeURIComponent(token)}`, { name, password })),
       signOut: async () => {

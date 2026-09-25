@@ -17,6 +17,7 @@ import { PREFS_EVENT, setTerminalPref, terminalPrefs, type TerminalPrefs } from 
 import { useLoad } from '../lib/useLoad'
 import { BackupTab } from './settings/BackupTab'
 import { LogTab } from './settings/LogTab'
+import { SecondFactorSection } from './settings/SecondFactor'
 
 const TABS = ['terminal', 'account', 'accounts', 'signin', 'security', 'backup', 'logs'] as const
 type Tab = (typeof TABS)[number]
@@ -209,6 +210,8 @@ function AccountTab() {
         </Section>
       )}
 
+      <SecondFactorSection account={account} oidcOnly={oidcOnly} provider={provider} />
+
       <Section title={t('account.passwordTitle')} intro={oidcOnly ? t('account.oidcOnly', { provider }) : t('account.passwordLead')}>
         {!oidcOnly && (
           <form
@@ -251,7 +254,23 @@ function AccountSettings() {
   const [inviteRole, setInviteRole] = useState('member')
   const [link, setLink] = useState<InviteInfo | null>(null)
   const [removing, setRemoving] = useState<Account | null>(null)
+  const [resetting, setResetting] = useState<Account | null>(null)
   const [busy, setBusy] = useState(false)
+
+  async function resetSecondFactor() {
+    if (!resetting) return
+    setBusy(true)
+    try {
+      await api.post(`/api/accounts/${resetting.id}/totp/reset`)
+      notify(t('twofactor.resetDone', { name: resetting.name }))
+      setResetting(null)
+      void accounts.reload()
+    } catch (error) {
+      notify(errorMessage(error))
+    } finally {
+      setBusy(false)
+    }
+  }
 
   async function invite() {
     setBusy(true)
@@ -323,6 +342,7 @@ function AccountSettings() {
                     {account.name}
                     {isMe && <span className="text-xs text-mist-500">({t('settings.you')})</span>}
                     <Badge tone={account.role === 'operator' ? 'accent' : 'neutral'}>{t(`settings.role.${account.role}`)}</Badge>
+                    {account.two_factor && <Badge tone="neutral">{t('twofactor.title')}</Badge>}
                   </p>
                   <p className="text-xs text-mist-500">
                     {account.sign_in === 'oidc' ? t('settings.viaOidc') : t('settings.viaPassword')} · {account.last_seen_at ? t('settings.lastSeen', { when: formatRelative(account.last_seen_at) }) : t('settings.neverSeen')}
@@ -330,6 +350,11 @@ function AccountSettings() {
                 </div>
                 {!isMe && (
                   <>
+                    {account.two_factor && (
+                      <Button variant="ghost" size="sm" onClick={() => setResetting(account)}>
+                        {t('twofactor.reset')}
+                      </Button>
+                    )}
                     <Button variant="ghost" size="sm" onClick={() => void setRole(account, account.role === 'operator' ? 'member' : 'operator')}>
                       {account.role === 'operator' ? t('settings.makeMember') : t('settings.makeOperator')}
                     </Button>
@@ -417,6 +442,24 @@ function AccountSettings() {
         }
       >
         <Banner tone="warn">{t('settings.deleteAccountText')}</Banner>
+      </Dialog>
+
+      <Dialog
+        open={resetting !== null}
+        title={t('twofactor.resetTitle', { name: resetting?.name ?? '' })}
+        onClose={() => setResetting(null)}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setResetting(null)}>
+              {t('common.cancel')}
+            </Button>
+            <Button variant="danger" loading={busy} onClick={() => void resetSecondFactor()}>
+              {t('twofactor.resetNow')}
+            </Button>
+          </>
+        }
+      >
+        <Banner tone="warn">{t('twofactor.resetText', { name: resetting?.name ?? '' })}</Banner>
       </Dialog>
     </div>
   )
@@ -717,6 +760,10 @@ function SecuritySettings() {
         )}
         {error && <Banner tone="bad">{error}</Banner>}
         {data.targets_mode === 'all' && <Banner tone="warn">{t('security.targetsAllWarn')}</Banner>}
+      </Section>
+
+      <Section title={t('twofactor.requiredTitle')}>
+        <Switch label={t('twofactor.requiredSwitch')} hint={t('twofactor.requiredHint')} checked={data.two_factor_required} onChange={(value) => void save({ two_factor_required: value })} />
       </Section>
 
       {/* The second way out, next to the targets, which is why it is here and not on the About page. */}

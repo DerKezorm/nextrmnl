@@ -78,6 +78,21 @@ def unlock(account: Account, password: str, idle_minutes: int) -> None:
     logger.info("Vault unlocked account=%s", account.name)
 
 
+def unwrap_key(account: Account, password: str) -> bytes:
+    """The vault key for a password, without opening the vault; ``crypto.WrongPassword`` if it is not the one."""
+    if not account.vault_ready:
+        raise VaultNotSetUp()
+    return crypto.unwrap(password, account.vault_salt or b"", account.vault_wrapped or b"")
+
+
+def open_with_key(account: Account, key: bytes, idle_minutes: int) -> None:
+    """Opens the vault with a key unwrapped earlier: the second step of a sign-in with a second factor."""
+    idle = timedelta(minutes=max(1, idle_minutes))
+    with _lock:
+        _open[account.id] = Opened(key=key, until=utcnow() + idle, idle=idle)
+    logger.info("Vault unlocked account=%s", account.name)
+
+
 def lock(account_id: int) -> None:
     with _lock:
         removed = _open.pop(account_id, None) is not None

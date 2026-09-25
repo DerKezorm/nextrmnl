@@ -11,12 +11,32 @@ export interface Account {
   sign_in: SignIn
   email: string
   two_factor: boolean
+  /** Unused recovery codes; 0 without a second factor. */
+  two_factor_recovery_left: number
+  /** The operator requires a second factor and this account has none yet: only the account page is open. */
+  second_factor_setup_required: boolean
   /** Linked to an identity at the OIDC provider. */
   oidc_linked: boolean
   vault: VaultState
   prefs: Record<string, unknown>
   created_at: string
   last_seen_at: string | null
+}
+
+/** The password step of a sign-in with a second factor: nothing is open yet. */
+export interface SecondFactorPending {
+  second_factor: true
+}
+
+export interface TotpEnrolment {
+  secret: string
+  uri: string
+  qr_svg: string
+}
+
+export interface RecoveryCodes {
+  recovery_codes: string[]
+  account: Account
 }
 
 export interface SetupState {

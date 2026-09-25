@@ -29,7 +29,7 @@ function Unreachable() {
 
 /** Before sign-in there are only three pages; after that, the shell with everything. */
 export default function App() {
-  const { state } = useAuth()
+  const { state, account } = useAuth()
 
   if (state === 'loading') return <PageLoading />
   if (state === 'unreachable') return <Unreachable />
@@ -40,6 +40,21 @@ export default function App() {
         <Route path="/invite/:token" element={<InvitePage />} />
         <Route path="*" element={<LoginPage />} />
       </Routes>
+    )
+  }
+
+  // The operator requires a second factor and this account has none yet: the server answers everything but
+  // the account page with 403, so the pages are not even offered.
+  if (account?.second_factor_setup_required) {
+    return (
+      <WorkspaceProvider>
+        <Routes>
+          <Route element={<AppShell />}>
+            <Route path="settings" element={<SettingsPage />} />
+            <Route path="*" element={<Navigate to="/settings?tab=account" replace />} />
+          </Route>
+        </Routes>
+      </WorkspaceProvider>
     )
   }
 

@@ -30,6 +30,9 @@ nextrmnl is part of the nex apps and looks like them.
   Ctrl+V, Ctrl+Shift+V, Shift+Insert or a right click. Several lines are shown before they run.
 - **Accounts**: the first account is the operator, others come by invitation link or through OpenID Connect.
   Connections can be shared; sharing passes name, address and settings, never access.
+- **Second factor**: a code from an authenticator app on top of the password (TOTP), with recovery codes for
+  the day the phone is gone. The operator can require it for every password account; whoever locks themselves
+  out gets it reset by the operator.
 - **A vault per account** for private keys and stored passwords, encrypted with a key that only the account's
   password unwraps. Not the operator, not a backup, not a database dump can read it. Generate Ed25519 or RSA
   keys, or paste existing ones. Download the vault as an encrypted file and restore it, here or on another nextrmnl.
@@ -99,6 +102,8 @@ open with the account's password only. Both go into the backup archive.
 ## Security in short
 
 - Passwords are hashed with Argon2id. Ten failed sign-ins in a row lock the account for fifteen minutes.
+- With a second factor, the password alone opens nothing: the vault key waits in memory for the code, at most
+  five minutes and five tries. A code counts once; the seed is stored encrypted, recovery codes as hashes.
 - The vault key is wrapped with Argon2id and AES-256-GCM; entries are AES-256-GCM. An open vault is its key in
   the server's memory, forgotten after 30 minutes without use (configurable) and on every restart.
 - Every changing request needs the header `X-Requested-By: nextrmnl`; WebSockets must come from the same origin.

@@ -34,7 +34,7 @@ from app.models import (  # noqa: E402
     VaultPassword,
 )
 from app.security import brake  # noqa: E402
-from app.services import vault  # noqa: E402
+from app.services import totp, vault  # noqa: E402
 
 UI = {"X-Requested-By": "nextrmnl"}
 PASSWORD = "correct-horse-battery"
@@ -48,6 +48,7 @@ def clean_db() -> Iterator[None]:
             db.execute(delete(model))
         db.commit()
     vault.lock_all()
+    totp.clear_for_tests()
     # The brake is per sender and in memory; every test starts unbraked.
     brake._fails.clear()
     yield

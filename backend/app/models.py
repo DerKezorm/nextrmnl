@@ -72,6 +72,10 @@ class Account(Base):
     oidc_subject: Mapped[str] = mapped_column(String(255), default="")
     #: TOTP seed, encrypted with the server secret. Empty: no second factor.
     totp_secret_enc: Mapped[str] = mapped_column(Text, default="")
+    #: SHA-256 hashes of the unused recovery codes, as a JSON list. Empty: none left, or no second factor.
+    totp_recovery: Mapped[str] = mapped_column(Text, default="")
+    #: The time step of the last accepted code; a code at or before it is a replay and is refused.
+    totp_last_step: Mapped[int] = mapped_column(Integer, default=0)
     #: Salt and wrapped vault key. Both empty until the vault is set up (OIDC accounts choose a vault password).
     vault_salt: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     vault_wrapped: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)

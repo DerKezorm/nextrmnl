@@ -22,13 +22,14 @@ from .middleware import RequestContextMiddleware, unhandled_error
 from .routers import about, auth, connections, health
 from .routers import logs as logs_router
 from .routers import settings as settings_router
+from .routers import totp as totp_router
 from .routers import vault as vault_router
 from .security import purge_sessions
-from .services import logs, settings_service, vault
+from .services import logs, settings_service, totp, vault
 
 logger = logging.getLogger("nextrmnl")
 
-ROUTERS = [health, auth, vault_router, connections, settings_router, about, logs_router]
+ROUTERS = [health, auth, totp_router, vault_router, connections, settings_router, about, logs_router]
 
 try:  # Optional parts, built separately. The app starts without them.
     from .routers import sessions as sessions_router
@@ -75,6 +76,7 @@ async def _housekeeping(stop: asyncio.Event) -> None:
     while not stop.is_set():
         try:
             vault.sweep()
+            totp.sweep()
             now = asyncio.get_running_loop().time()
             if now - last_purge > 3600:
                 with SessionLocal() as db:

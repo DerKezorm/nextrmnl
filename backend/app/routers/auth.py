@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, Response
@@ -13,10 +14,15 @@ from ..deps import CurrentAccount, DbSession, OperatorAccount, check_csrf, clien
 from ..meldungen import fehler, meldung
 from ..models import ROLES, SIGN_IN_PASSWORD, Account
 from ..security import MIN_PASSWORD, SESSION_COOKIE, brake, end_all_sessions, end_session, start_session
-from ..services import accounts, settings_service, vault
+from ..services import accounts, settings_service, totp, vault
 from ..services.accounts import AccountError
 
+logger = logging.getLogger("nextrmnl.auth")
+
 router = APIRouter(prefix="/api", tags=["auth"])
+
+#: The password step of a sign-in with a second factor leaves this cookie; the code step redeems it.
+PENDING_COOKIE = "nextrmnl_2fa"
 
 
 class SetupIn(BaseModel):
@@ -79,6 +85,18 @@ def _check_password(password: str) -> None:
         raise fehler("password_too_short", f"Use at least {MIN_PASSWORD} characters.", 422, minimum=MIN_PASSWORD)
 
 
+def _set_pending_cookie(response: Response, request: Request, token: str) -> None:
+    response.set_cookie(
+        PENDING_COOKIE,
+        token,
+        max_age=totp.PENDING_SECONDS,
+        httponly=True,
+        samesite="lax",
+        secure=_secure(request),
+        path="/api/auth",
+    )
+
+
 def account_view(db: DbSession, account: Account) -> dict[str, Any]:
     return {
         "id": account.id,
@@ -87,6 +105,8 @@ def account_view(db: DbSession, account: Account) -> dict[str, Any]:
         "sign_in": account.sign_in,
         "email": account.email,
         "two_factor": bool(account.totp_secret_enc),
+        "two_factor_recovery_left": len(totp.load_recovery(account.totp_recovery)) if account.totp_secret_enc else 0,
+        "second_factor_setup_required": totp.setup_required(db, account),
         "oidc_linked": bool(account.oidc_subject),
         "vault": "unset" if not account.vault_ready else ("open" if vault.is_open(account.id) else "locked"),
         "prefs": account.prefs or {},
@@ -140,6 +160,18 @@ def login(payload: LoginIn, request: Request, response: Response, db: DbSession)
         brake.failed(key)
         raise _raise(error) from error
     brake.succeeded(key)
+    if account.totp_secret_enc:
+        # Nothing opens yet. The vault key is unwrapped now, while the password is at hand, and parked until the
+        # code step; the browser gets a short-lived cookie that names the parked sign-in and nothing else.
+        vault_key: bytes | None = None
+        if account.vault_ready:
+            try:
+                vault_key = vault.unwrap_key(account, payload.password)
+            except Exception:  # noqa: BLE001
+                vault_key = None
+        _set_pending_cookie(response, request, totp.start_pending(account.id, vault_key))
+        logger.info("Password accepted, second factor pending account=%s", account.name)
+        return {"second_factor": True}
     # The password was just given, so the vault opens along with the session.
     if account.vault_ready:
         try:

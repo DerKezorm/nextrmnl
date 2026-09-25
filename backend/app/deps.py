@@ -16,10 +16,13 @@ from .db import get_db
 from .meldungen import fehler
 from .models import OPERATOR, Account
 from .security import CSRF_HEADER, CSRF_VALUE, SESSION_COOKIE, session_account
-from .services import logs, settings_service
+from .services import logs, settings_service, totp
 
 DbSession = Annotated[Session, Depends(get_db)]
 UNSAFE = {"POST", "PUT", "PATCH", "DELETE"}
+#: What an account may still call while the operator requires a second factor it has not set up: seeing itself,
+#: enrolling, leaving.
+SETUP_ONLY_PATHS = {"/api/auth/me", "/api/auth/logout", "/api/auth/totp/begin", "/api/auth/totp/confirm"}
 
 
 def client_ip(request: Request | WebSocket) -> str:
@@ -40,6 +43,8 @@ def current_account(request: Request, db: DbSession) -> Account:
     if account is None:
         raise fehler("not_signed_in", "Not signed in.", 401)
     logs.set_actor(account.name)
+    if request.url.path not in SETUP_ONLY_PATHS and totp.setup_required(db, account):
+        raise fehler("second_factor_setup_required", "Set up your second factor first.", 403)
     return account
 
 
@@ -80,6 +85,8 @@ def websocket_account(websocket: WebSocket, db: Session) -> Account | None:
     if not same_origin(websocket, db):
         return None
     account = session_account(db, websocket.cookies.get(SESSION_COOKIE))
+    if account is not None and totp.setup_required(db, account):
+        return None
     if account is not None:
         logs.set_actor(account.name)
     return account

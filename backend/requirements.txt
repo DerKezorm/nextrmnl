@@ -13,3 +13,5 @@ httpx==0.28.1
 python-multipart==0.0.32
 # PyJWT checks the id tokens of the OIDC provider and signs the short-lived sign-in attempt cookie.
 pyjwt==2.15.0
+# The QR code for enrolling an authenticator app. Pure Python, no dependencies.
+segno==1.6.6

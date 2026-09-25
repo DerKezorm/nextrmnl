@@ -580,7 +580,7 @@
     "provider": "Anbieter",
     "publicUrl": "Öffentliche Adresse",
     "publicUrlHint": "Die Adresse, unter der die Leute nextrmnl erreichen, etwa hinter dem Proxy. Sie steht in Einladungslinks, ist die Rückkehradresse beim OIDC-Anbieter und gilt bei der Herkunftsprüfung der WebSockets. Leer heißt: NEXTRMNL_PUBLIC_URL aus der Umgebung, sonst die Adresse der Anfrage.",
-    "publicUrlNote": "Nach einer Änderung den authentik-Knopf erneut laufen lassen oder die Rückkehradresse beim Anbieter anpassen.",
+    "publicUrlNote": "Nach einer Änderung kennt der Anbieter noch die alte Rückkehradresse. Bei authentik: unten „Mit authentik einrichten“ mit einem frischen API-Token noch einmal auf „Einrichten“, das ändert den vorhandenen Provider. Sonst die Rückkehradresse beim Anbieter von Hand anpassen.",
     "publicUrlSaved": "Öffentliche Adresse gespeichert.",
     "publicUrlTitle": "Adresse nach außen",
     "recommended": "Empfohlen",

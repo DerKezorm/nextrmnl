@@ -461,7 +461,11 @@ function SignInSettings() {
   const notify = useNotice()
   const config = useLoad(() => api.get<OidcConfig>('/api/oidc/config'))
   const settings = useLoad(() => api.get<Settings>('/api/settings'))
-  const [url, setUrl] = useState('')
+  // null until the person types: then the address of an authentik that is already set up is offered,
+  // read from the issuer, so that running the setup again only needs a fresh token.
+  const [url, setUrl] = useState<string | null>(null)
+  const authentikBase = config.data?.provider_name === 'authentik' ? config.data.issuer.replace(/\/application\/o\/[^/]+\/?$/, '') : ''
+  const urlValue = url ?? authentikBase
   const [token, setToken] = useState('')
   const [result, setResult] = useState<AuthentikResult | null>(null)
   const [running, setRunning] = useState(false)
@@ -479,7 +483,7 @@ function SignInSettings() {
     setError(null)
     setResult(null)
     try {
-      setResult(await api.post<AuthentikResult>('/api/oidc/authentik/setup', { url: url.trim(), token }))
+      setResult(await api.post<AuthentikResult>('/api/oidc/authentik/setup', { url: urlValue.trim(), token }))
       setToken('')
       void config.reload()
     } catch (caught) {
@@ -558,12 +562,12 @@ function SignInSettings() {
         {result === null && !running ? (
           <>
             <div className="grid gap-4 sm:grid-cols-2">
-              <Field label={t('signin.authentikUrl')} value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://auth.example.com" spellCheck={false} />
+              <Field label={t('signin.authentikUrl')} value={urlValue} onChange={(event) => setUrl(event.target.value)} placeholder="https://auth.example.com" spellCheck={false} />
               <Field label={t('signin.token')} type="password" value={token} onChange={(event) => setToken(event.target.value)} autoComplete="off" hint={t('signin.tokenHint')} />
             </div>
             {error && <Banner tone="bad">{error}</Banner>}
             <div className="flex flex-wrap items-center gap-3">
-              <Button disabled={!token.trim() || !url.trim()} onClick={() => void setUp()}>
+              <Button disabled={!token.trim() || !urlValue.trim()} onClick={() => void setUp()}>
                 <Symbol name="check" />
                 {t('signin.setUp')}
               </Button>

@@ -580,7 +580,7 @@
     "provider": "Provider",
     "publicUrl": "Public address",
     "publicUrlHint": "The address people use to reach nextrmnl, for example behind the proxy. It goes into invitation links, is the return address at the OIDC provider and counts in the origin check of the WebSockets. Empty means NEXTRMNL_PUBLIC_URL from the environment, otherwise the address of the request.",
-    "publicUrlNote": "After a change, run the authentik button again or adjust the return address at the provider.",
+    "publicUrlNote": "After a change the provider still knows the old return address. With authentik: below under \"Set up with authentik\", click \"Set up\" once more with a fresh API token; that updates the existing provider. Otherwise adjust the return address at the provider by hand.",
     "publicUrlSaved": "Public address saved.",
     "publicUrlTitle": "Address to the outside",
     "recommended": "Recommended",

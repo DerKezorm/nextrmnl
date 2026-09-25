@@ -59,8 +59,15 @@ def generate_seed() -> str:
     return base64.b32encode(secrets.token_bytes(SEED_BYTES)).decode("ascii").rstrip("=")
 
 
+class SeedUnreadable(Exception):
+    """The stored seed cannot be opened: the server secret is not the one that sealed it."""
+
+
 def _seed_bytes(seed: str) -> bytes:
     cleaned = seed.strip().replace(" ", "").upper()
+    if not cleaned:
+        # An empty seed would make every code computable by anyone; it must never verify anything.
+        raise SeedUnreadable()
     return base64.b32decode(cleaned + "=" * (-len(cleaned) % 8))
 
 
@@ -159,7 +166,12 @@ def seal_seed(seed: str) -> str:
 
 
 def open_seed(stored: str) -> str:
-    return crypto.decrypt_secret(stored)
+    """The seed, or ``SeedUnreadable`` when the server secret changed: then the second factor fails closed,
+    the way the OIDC secret does, instead of accepting codes derived from nothing."""
+    seed = crypto.decrypt_secret(stored)
+    if not seed:
+        raise SeedUnreadable()
+    return seed
 
 
 # --- What waits in memory -------------------------------------------------------------------------------------- #

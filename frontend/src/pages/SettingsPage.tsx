@@ -131,6 +131,8 @@ function AccountTab() {
   const [next, setNext] = useState('')
   const [repeat, setRepeat] = useState('')
   const [busy, setBusy] = useState(false)
+  const [linking, setLinking] = useState(false)
+  const [linkPassword, setLinkPassword] = useState('')
   const [error, setError] = useState<string | null>(params.get('error') ? errorText(params.get('error')) || t('errors.generic') : null)
   const provider = oidc.data?.provider_name || 'OIDC'
   const linkedNow = params.get('linked') === '1'
@@ -151,6 +153,32 @@ function AccountTab() {
       notify(t('account.unlinked'))
     } catch (caught) {
       setError(errorMessage(caught))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  // Linking is a POST with the password: the server answers with the provider's address, the browser goes there.
+  async function startLink() {
+    setBusy(true)
+    setError(null)
+    try {
+      const result = await api.post<{ url: string }>('/api/oidc/link/start', { password: linkPassword })
+      setLinkPassword('')
+      window.location.assign(result.url)
+    } catch (caught) {
+      setError(errorMessage(caught))
+      setBusy(false)
+    }
+  }
+
+  async function signOutEverywhere() {
+    setBusy(true)
+    try {
+      await api.post('/api/auth/logout-all')
+      notify(t('account.signedOutEverywhere'))
+    } catch (caught) {
+      notify(errorMessage(caught))
     } finally {
       setBusy(false)
     }
@@ -188,8 +216,14 @@ function AccountTab() {
           <dt className="text-mist-600">{t('settings.tabSignin')}</dt>
           <dd className="text-mist-100">{oidcOnly ? t('account.signInOidc', { provider }) : t('account.signInPassword')}</dd>
         </dl>
-        {error && <Banner tone="bad">{error}</Banner>}
+        {error && !linking && <Banner tone="bad">{error}</Banner>}
         {linkedNow && <Banner tone="ok">{t('account.linkedNow')}</Banner>}
+        <div className="flex flex-wrap items-center gap-3">
+          <Button variant="ghost" size="sm" loading={busy && !linking} onClick={() => void signOutEverywhere()}>
+            {t('account.signOutEverywhere')}
+          </Button>
+          <p className="text-xs text-mist-500">{t('account.signOutEverywhereHint')}</p>
+        </div>
       </Section>
 
       {oidc.data?.enabled && !oidcOnly && (
@@ -201,14 +235,53 @@ function AccountTab() {
                 {t('account.unlink')}
               </Button>
             ) : (
-              <a href="/api/oidc/start?link=1" className="inline-flex items-center gap-2 rounded-full bg-accent-500 px-3.5 py-1.5 text-xs font-semibold text-on-accent hover:bg-accent-400">
+              <Button size="sm" onClick={() => setLinking(true)}>
                 <Symbol name="shield" className="h-3.5 w-3.5" />
                 {t('account.link', { provider })}
-              </a>
+              </Button>
             )}
           </div>
         </Section>
       )}
+
+      <Dialog
+        open={linking}
+        title={t('account.link', { provider })}
+        onClose={() => {
+          setLinking(false)
+          setLinkPassword('')
+          setError(null)
+        }}
+        footer={
+          <>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setLinking(false)
+                setLinkPassword('')
+                setError(null)
+              }}
+            >
+              {t('common.cancel')}
+            </Button>
+            <Button loading={busy} disabled={!linkPassword} onClick={() => void startLink()}>
+              {t('account.link', { provider })}
+            </Button>
+          </>
+        }
+      >
+        <form
+          className="flex flex-col gap-4"
+          onSubmit={(event) => {
+            event.preventDefault()
+            if (linkPassword) void startLink()
+          }}
+        >
+          <p className="text-sm text-mist-300">{t('account.linkPasswordLead', { provider })}</p>
+          <Field label={t('account.linkPassword')} type="password" autoComplete="current-password" value={linkPassword} onChange={(event) => setLinkPassword(event.target.value)} autoFocus />
+          {error && <Banner tone="bad">{error}</Banner>}
+        </form>
+      </Dialog>
 
       <SecondFactorSection account={account} oidcOnly={oidcOnly} provider={provider} />
 
@@ -255,7 +328,22 @@ function AccountSettings() {
   const [link, setLink] = useState<InviteInfo | null>(null)
   const [removing, setRemoving] = useState<Account | null>(null)
   const [resetting, setResetting] = useState<Account | null>(null)
+  const [forcing, setForcing] = useState<Account | null>(null)
   const [busy, setBusy] = useState(false)
+
+  async function forceSignOut() {
+    if (!forcing) return
+    setBusy(true)
+    try {
+      await api.post(`/api/accounts/${forcing.id}/sign-out`)
+      notify(t('settings.forcedSignOut', { name: forcing.name }))
+      setForcing(null)
+    } catch (error) {
+      notify(errorMessage(error))
+    } finally {
+      setBusy(false)
+    }
+  }
 
   async function resetSecondFactor() {
     if (!resetting) return
@@ -350,6 +438,9 @@ function AccountSettings() {
                 </div>
                 {!isMe && (
                   <>
+                    <Button variant="ghost" size="sm" onClick={() => setForcing(account)}>
+                      {t('settings.forceSignOut')}
+                    </Button>
                     {account.two_factor && (
                       <Button variant="ghost" size="sm" onClick={() => setResetting(account)}>
                         {t('twofactor.reset')}
@@ -460,6 +551,24 @@ function AccountSettings() {
         }
       >
         <Banner tone="warn">{t('twofactor.resetText', { name: resetting?.name ?? '' })}</Banner>
+      </Dialog>
+
+      <Dialog
+        open={forcing !== null}
+        title={t('settings.forceSignOutTitle', { name: forcing?.name ?? '' })}
+        onClose={() => setForcing(null)}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setForcing(null)}>
+              {t('common.cancel')}
+            </Button>
+            <Button variant="danger" loading={busy} onClick={() => void forceSignOut()}>
+              {t('settings.forceSignOut')}
+            </Button>
+          </>
+        }
+      >
+        <Banner tone="warn">{t('settings.forceSignOutText', { name: forcing?.name ?? '' })}</Banner>
       </Dialog>
     </div>
   )

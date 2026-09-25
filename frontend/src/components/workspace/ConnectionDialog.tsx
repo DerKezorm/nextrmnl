@@ -59,7 +59,7 @@ export function ConnectionDialog({ connection, onClose, startTab = 'basics' }: {
       // On a connection shared by someone else, only my own login belongs to me: user, method, own key.
       const saved =
         connection && readOnly
-          ? await api.put<Connection>(`/api/connections/${connection.id}/my-access`, { user: effective.user, auth: effective.auth, key_id: effective.key_id })
+          ? await api.put<Connection>(`/api/connections/${connection.id}/my-access`, { user: effective.user, auth: effective.auth, key_id: effective.key_id, start_command: effective.start_command.trim() })
           : connection
             ? await api.put<Connection>(`/api/connections/${connection.id}`, effective)
             : await api.post<Connection>('/api/connections', effective)
@@ -252,7 +252,7 @@ export function ConnectionDialog({ connection, onClose, startTab = 'basics' }: {
             </div>
 
             <Switch label={t('edit.keepalive')} hint={t('edit.keepaliveHint')} checked={draft.keepalive} onChange={(value) => set('keepalive', value)} disabled={readOnly} />
-            <Field label={t('edit.startCommand')} value={draft.start_command} onChange={(event) => set('start_command', event.target.value)} placeholder="tmux new -A -s main" hint={t('edit.startCommandHint')} spellCheck={false} />
+            <Field label={t('edit.startCommand')} value={draft.start_command} onChange={(event) => set('start_command', event.target.value)} placeholder="tmux new -A -s main" hint={readOnly ? t('edit.ownStartCommandHint') : t('edit.startCommandHint')} spellCheck={false} />
           </>
         )}
 

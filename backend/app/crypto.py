@@ -19,6 +19,7 @@ with a key derived from ``secret.key``; that is why the key goes into backups.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 
 from argon2.low_level import Type, hash_secret_raw
@@ -39,14 +40,34 @@ class WrongPassword(Exception):
     pass
 
 
-def derive(password: str, salt: bytes) -> bytes:
+def kdf_params_now() -> str:
+    """The Argon2 costs of this installation, as stored next to a wrapped key. A vault wrapped with them opens
+    with them, whatever the environment says later."""
     settings = get_settings()
+    return json.dumps({"t": settings.argon2_time, "m": settings.argon2_memory_kib, "p": settings.argon2_parallelism})
+
+
+def _costs(params: str) -> tuple[int, int, int]:
+    """Time, memory and lanes from stored params; the current settings when nothing is stored (vaults from
+    before the costs were recorded)."""
+    if params:
+        try:
+            data = json.loads(params)
+            return int(data["t"]), int(data["m"]), int(data["p"])
+        except (ValueError, TypeError, KeyError):
+            pass
+    settings = get_settings()
+    return settings.argon2_time, settings.argon2_memory_kib, settings.argon2_parallelism
+
+
+def derive(password: str, salt: bytes, params: str = "") -> bytes:
+    time_cost, memory_kib, parallelism = _costs(params)
     return hash_secret_raw(
         password.encode("utf-8"),
         salt,
-        time_cost=settings.argon2_time,
-        memory_cost=settings.argon2_memory_kib,
-        parallelism=settings.argon2_parallelism,
+        time_cost=time_cost,
+        memory_cost=memory_kib,
+        parallelism=parallelism,
         hash_len=KEY_BYTES,
         type=Type.ID,
     )
@@ -64,20 +85,21 @@ def _open(key: bytes, sealed: bytes, aad: bytes) -> bytes:
 
 
 def new_vault(password: str) -> tuple[bytes, bytes, bytes]:
-    """Returns (salt, wrapped vault key, vault key)."""
+    """Returns (salt, wrapped vault key, vault key). Wrapped with this installation's costs (``kdf_params_now``)."""
     vault_key = os.urandom(KEY_BYTES)
     salt, wrapped = wrap(vault_key, password)
     return salt, wrapped, vault_key
 
 
 def wrap(vault_key: bytes, password: str) -> tuple[bytes, bytes]:
+    """Wraps with this installation's costs; the caller stores ``kdf_params_now()`` next to the result."""
     salt = os.urandom(SALT_BYTES)
     return salt, _seal(derive(password, salt), vault_key, AAD_WRAP)
 
 
-def unwrap(password: str, salt: bytes, wrapped: bytes) -> bytes:
+def unwrap(password: str, salt: bytes, wrapped: bytes, params: str = "") -> bytes:
     try:
-        return _open(derive(password, salt), wrapped, AAD_WRAP)
+        return _open(derive(password, salt, params), wrapped, AAD_WRAP)
     except InvalidTag as error:
         raise WrongPassword() from error
 

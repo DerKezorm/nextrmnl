@@ -148,8 +148,8 @@ app = FastAPI(
     title="nextrmnl",
     version=__version__,
     lifespan=lifespan,
-    docs_url="/api/docs",
-    openapi_url="/api/openapi.json",
+    docs_url="/api/docs" if get_settings().api_docs else None,
+    openapi_url="/api/openapi.json" if get_settings().api_docs else None,
     redoc_url=None,
 )
 app.add_middleware(RequestContextMiddleware)

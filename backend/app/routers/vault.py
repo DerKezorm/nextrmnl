@@ -4,16 +4,17 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from .. import crypto
-from ..deps import CurrentAccount, DbSession
+from ..deps import CurrentAccount, DbSession, reauth_failed, reauth_guard, reauth_succeeded
 from ..meldungen import fehler
 from ..models import KEY_TYPES, SIGN_IN_OIDC, Connection, VaultKey, VaultPassword
 from ..security import MIN_PASSWORD
 from ..services import settings_service, vault
+from .connections import accessible
 
 router = APIRouter(prefix="/api/vault", tags=["vault"])
 
@@ -66,13 +67,16 @@ def state(account: CurrentAccount) -> dict[str, Any]:
 
 
 @router.post("/unlock", summary="Open the vault with the account's password")
-def unlock(payload: PasswordIn, account: CurrentAccount, db: DbSession) -> dict[str, Any]:
+def unlock(payload: PasswordIn, request: Request, account: CurrentAccount, db: DbSession) -> dict[str, Any]:
     if not account.vault_ready:
         raise fehler("vault_not_set_up", "This account has no vault yet.", 409)
+    reauth_guard(request, account)
     try:
         vault.unlock(account, payload.password, int(settings_service.get(db, "vault_lock_minutes")))
     except crypto.WrongPassword as error:
+        reauth_failed(request, db, account)
         raise fehler("wrong_password", "The password is wrong.", 401) from error
+    reauth_succeeded(request, db, account)
     return {"state": "open"}
 
 
@@ -101,15 +105,20 @@ class VaultPasswordChangeIn(BaseModel):
 
 
 @router.put("/password", status_code=204, summary="OIDC accounts: change the vault password")
-def change_vault_password(payload: VaultPasswordChangeIn, account: CurrentAccount, db: DbSession) -> None:
+def change_vault_password(
+    payload: VaultPasswordChangeIn, request: Request, account: CurrentAccount, db: DbSession
+) -> None:
     if account.sign_in != SIGN_IN_OIDC:
         raise fehler("password_account", "Change the account password instead; it is the vault password.", 409)
     if len(payload.new) < MIN_PASSWORD:
         raise fehler("password_too_short", f"Use at least {MIN_PASSWORD} characters.", 422, minimum=MIN_PASSWORD)
+    reauth_guard(request, account)
     try:
         vault.rewrap(db, account, payload.current, payload.new)
     except crypto.WrongPassword as error:
+        reauth_failed(request, db, account)
         raise fehler("wrong_password", "The password is wrong.", 401) from error
+    reauth_succeeded(request, db, account)
 
 
 @router.post("/reset", summary="Forgot the vault password: start over with an empty vault")
@@ -207,10 +216,15 @@ def list_passwords(account: CurrentAccount, db: DbSession) -> list[dict[str, Any
 def store_password(
     connection_id: int, payload: StoredPasswordIn, account: CurrentAccount, db: DbSession
 ) -> dict[str, Any]:
-    if db.get(Connection, connection_id) is None:
-        raise fehler("not_found", "Connection not found.", 404)
+    # Only a connection the account can see: otherwise the export would tell a member where everybody else
+    # connects, name, host and user, by storing a password for every id there is.
+    connection = accessible(db, account, connection_id)
+    share = None if connection.owner_id == account.id else vault.share_of(db, account.id, connection_id)
+    user = share.user if share is not None and share.user else connection.user
     try:
-        row = vault.set_password(db, account, connection_id, payload.password)
+        row = vault.set_password(
+            db, account, connection_id, payload.password, host=connection.host, port=connection.port, user=user
+        )
     except vault.VaultLocked as error:
         raise locked() from error
     return password_view(row)

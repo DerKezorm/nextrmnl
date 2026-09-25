@@ -43,6 +43,7 @@ import secrets
 import stat
 import time
 from collections.abc import AsyncIterator
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import timedelta
 from functools import partial
@@ -72,6 +73,7 @@ from ..models import (
     SessionRecord,
     utcnow,
 )
+from ..security import brake, session_account
 from . import hostkeys, settings_service, targets, vault
 
 logger = logging.getLogger("nextrmnl.ssh")
@@ -103,6 +105,14 @@ DETAIL_OPERATOR = "disconnected_by_operator"
 DETAIL_SHUTDOWN = "server_shutdown"
 DETAIL_EXIT = "exit"
 DETAIL_INTERNAL = "internal_error"
+#: The browser session behind the terminal ended: sign-out, deletion, a reset, or the operator ended it.
+DETAIL_SIGNED_OUT = "signed_out"
+#: Too many refused sign-ins at targets in a row; the account waits before the next connect.
+DETAIL_TOO_MANY = "too_many_attempts"
+#: Live sessions one account may hold; more is a script, not a person.
+MAX_SESSIONS_PER_ACCOUNT = 25
+#: How often a live session checks that its browser session still exists.
+AUTH_WATCH_SECONDS = 30
 
 
 class SessionEnded(Exception):
@@ -135,10 +145,17 @@ class Target:
     keepalive: bool = True
     start_command: str = ""
     jump: Target | None = None
+    #: The address the allowed-targets check resolved and judged; the connection goes there, not to a second
+    #: resolution of the name that could answer differently.
+    address: str = ""
 
     @property
     def label(self) -> str:
         return f"{self.user}@{self.host}:{self.port}"
+
+    @property
+    def endpoint(self) -> str:
+        return self.address or self.host
 
 
 def _accessible(db: Session, account: Account, connection_id: int) -> Connection | None:
@@ -153,14 +170,16 @@ def _accessible(db: Session, account: Account, connection_id: int) -> Connection
 
 def target_from_connection(db: Session, account: Account, row: Connection, depth: int = 0) -> Target:
     """A target with its chain of jump hosts. Every jump must be visible to the account too."""
-    auth, key_id, user = row.auth, row.key_id, row.user
+    auth, key_id, user, start_command = row.auth, row.key_id, row.user, row.start_command
     if row.owner_id != account.id:
         # A shared connection carries the owner's key, which nobody else can read. The member signs in with
-        # their own user name and their own key or password from their own vault (``ConnectionShare``).
+        # their own user name and their own key or password from their own vault (``ConnectionShare``), and
+        # only their own command runs in their shell: the owner's would run with the member's rights.
         share = db.get(ConnectionShare, {"connection_id": row.id, "account_id": account.id})
         auth = share.auth if share is not None and share.auth in (AUTH_KEY, AUTH_PASSWORD, AUTH_ASK) else AUTH_ASK
         key_id = share.key_id if share is not None and auth == AUTH_KEY else None
         user = share.user if share is not None and share.user else row.user
+        start_command = share.start_command if share is not None else ""
         if auth == AUTH_KEY and key_id is None:
             auth = AUTH_ASK
     jump = None
@@ -180,7 +199,7 @@ def target_from_connection(db: Session, account: Account, row: Connection, depth
         connection_id=row.id,
         name=row.name,
         keepalive=row.keepalive,
-        start_command=row.start_command,
+        start_command=start_command,
         jump=jump,
     )
 
@@ -275,11 +294,20 @@ def _classify(error: BaseException) -> SessionEnded:
 _sessions: dict[str, SshSession] = {}
 
 
+def _sign_in_alive(token: str) -> bool:
+    with SessionLocal() as db:
+        return session_account(db, token) is not None
+
+
 class SshSession:
     def __init__(self, account: Account, target: Target, from_ip: str, cols: int, rows: int) -> None:
         self.id = secrets.token_urlsafe(12)
         self.account_id = account.id
         self.account_name = account.name
+        self.account_role = account.role
+        #: The browser session's token; the terminal ends when that session does.
+        self.session_token: str | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
         self.target = target
         self.from_ip = from_ip
         self.cols, self.rows = cols, rows
@@ -297,7 +325,8 @@ class SshSession:
         self._sftp: asyncssh.SFTPClient | None = None
         self._home: str | None = None
         self._ws: WebSocket | None = None
-        self._answers: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+        # Bounded: answers arrive one at a time; a browser sending thousands must not grow the server.
+        self._answers: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue(maxsize=32)
         self._send_lock = asyncio.Lock()
         self._browser_gone = asyncio.Event()
         self._closed_sent = False
@@ -338,6 +367,12 @@ class SshSession:
                 if data is not None:
                     if self.process is not None and not self.process.stdin.is_closing():
                         self.process.stdin.write(data)
+                        try:
+                            # Back-pressure: a browser pasting megabytes waits for the shell instead of filling
+                            # the server's memory.
+                            await self.process.stdin.drain()
+                        except (asyncssh.Error, OSError, BrokenPipeError):
+                            break
                     continue
                 text = message.get("text")
                 if not text:
@@ -391,11 +426,16 @@ class SshSession:
 
     async def run(self, websocket: WebSocket) -> None:
         self._ws = websocket
+        self._loop = asyncio.get_running_loop()
         _sessions[self.id] = self
         self._open_record()
         reader = asyncio.create_task(self._read_browser())
         try:
             await self._send({"type": "status", "state": "connecting", "session_id": self.id})
+            if brake.wait_seconds(self._brake_key()):
+                # Refused sign-ins at targets count per account: one member must not hammer a machine into
+                # its fail2ban for everybody, and the server does not connect on a script's behalf all night.
+                raise SessionEnded(END_FAILED, DETAIL_TOO_MANY)
             await self._check_targets()
             await self._connect_chain()
             if self.end != END_RUNNING:
@@ -442,7 +482,14 @@ class SshSession:
                     mode,
                 )
                 raise SessionEnded(END_FAILED, DETAIL_TARGET, verdict.reason)
+            if verdict.addresses:
+                # Connect to what was judged. A name whose owner answers differently the second time (a short
+                # TTL, a rebinding trick) would otherwise walk the policy around.
+                target.address = verdict.addresses[0]
             target = target.jump
+
+    def _brake_key(self) -> str:
+        return f"connect:{self.account_id}"
 
     async def _connect_chain(self) -> None:
         """Jump hosts first, innermost last; each one becomes the tunnel of the next."""
@@ -486,11 +533,13 @@ class SshSession:
             except asyncssh.PermissionDenied:
                 credentials.password = None
                 refused = "stored" if credentials.via == "stored password" else "typed"
+                brake.failed(self._brake_key())
                 logger.info(
                     "Sign-in refused account=%s target=%s via=%s try=%s", self.account_name, target.label,
                     credentials.via, number + 1,
                 )
                 continue
+            brake.succeeded(self._brake_key())
             self._remember_password(target, credentials)
             return conn, attempt
         raise SessionEnded(END_FAILED, DETAIL_AUTH)
@@ -521,7 +570,7 @@ class SshSession:
         logger.debug("Probing host key account=%s target=%s", self.account_name, target.label)
         try:
             conn = await asyncssh.connect(
-                target.host,
+                target.endpoint,
                 target.port,
                 client_factory=partial(_Client, target, attempt),
                 client_keys=None,
@@ -549,7 +598,7 @@ class SshSession:
                          credentials.via, tunnel is not None)
             try:
                 conn = await asyncssh.connect(
-                    target.host,
+                    target.endpoint,
                     target.port,
                     client_factory=partial(_Client, target, attempt),
                     client_keys=credentials.keys or None,
@@ -595,6 +644,14 @@ class SshSession:
                 key.get_fingerprint(),
                 self.account_name,
             )
+            if self.account_role != OPERATOR:
+                # The store is shared by every account. A member replacing a changed key would make the
+                # impostor's key the known one for everybody else, without anybody else ever seeing a warning.
+                raise SessionEnded(
+                    END_HOSTKEY,
+                    DETAIL_HOSTKEY,
+                    "The host key of this machine has changed. Only the operator can accept the new key.",
+                )
         answer = await self._ask(question, "hostkey")
         if answer.get("accept") is not True:
             logger.warning(
@@ -614,7 +671,9 @@ class SshSession:
         if target.auth == AUTH_PASSWORD and number == 0 and target.connection_id is not None:
             with SessionLocal() as db:
                 try:
-                    stored = vault.get_password(db, self.account_id, target.connection_id)
+                    stored = vault.get_password(
+                        db, self.account_id, target.connection_id, host=target.host, port=target.port, user=target.user
+                    )
                 except vault.VaultLocked as error:
                     raise SessionEnded(END_FAILED, DETAIL_VAULT) from error
             if stored is not None:
@@ -679,7 +738,9 @@ class SshSession:
             if account is None:
                 return
             try:
-                vault.set_password(db, account, target.connection_id, password)
+                vault.set_password(
+                    db, account, target.connection_id, password, host=target.host, port=target.port, user=target.user
+                )
             except vault.VaultLocked:
                 logger.info("Password not stored, vault locked account=%s connection_id=%s", self.account_name,
                             target.connection_id)
@@ -719,14 +780,21 @@ class SshSession:
         )
 
     async def _serve_shell(self) -> None:
-        """Pumps shell output to the browser until the shell exits or the browser leaves."""
+        """Pumps shell output to the browser until the shell exits, the browser leaves, or the sign-in ends."""
         assert self.process is not None
         pump = asyncio.create_task(self._pump())
         gone = asyncio.create_task(self._browser_gone.wait())
-        done, _pending = await asyncio.wait({pump, gone}, return_when=asyncio.FIRST_COMPLETED)
+        watch = asyncio.create_task(self._watch_auth())
+        done, _pending = await asyncio.wait({pump, gone, watch}, return_when=asyncio.FIRST_COMPLETED)
+        watch.cancel()
         if pump not in done:
             pump.cancel()
             gone.cancel()
+            if watch in done:
+                self._set_end(END_CUT, DETAIL_SIGNED_OUT)
+                await self._send_closed()
+                self._close_connections()
+                return
             raise BrowserGone()
         gone.cancel()
         lost = pump.result()
@@ -740,6 +808,18 @@ class SshSession:
         else:
             self._set_end(END_NORMAL, DETAIL_EXIT)
         await self._send_closed()
+
+    async def _watch_auth(self) -> None:
+        """Returns once the browser session behind this terminal is gone: signed out elsewhere, deleted, expired.
+        A cookie is checked at the handshake only; without this a shell would outlive the sign-in it came with."""
+        while True:
+            await asyncio.sleep(AUTH_WATCH_SECONDS)
+            token = self.session_token
+            if token is None:
+                continue
+            if not await asyncio.to_thread(_sign_in_alive, token):
+                logger.info("Session cut, sign-in ended account=%s target=%s", self.account_name, self.target.label)
+                return
 
     async def _send_closed(self) -> None:
         """Tells the browser once how the session ended, whoever ended it."""
@@ -781,7 +861,8 @@ class SshSession:
     def cut(self, end: str, detail: str) -> None:
         """Ends the session from outside (operator, shutdown). The lifecycle notices and cleans up."""
         self._set_end(end, detail)
-        self._answers.put_nowait({"type": "_cut"})
+        with suppress(asyncio.QueueFull):
+            self._answers.put_nowait({"type": "_cut"})
         self._close_connections()
 
     def _close_connections(self) -> None:
@@ -939,8 +1020,11 @@ class SshSession:
         sftp = await self.sftp()
         remote = posixpath.join(self._remote(directory), name)
         total = 0
+        # Opened outside the guard: if the file cannot be opened at all (read-only, no permission), nothing was
+        # written and the existing file is not ours to remove.
+        handle = await sftp.open(remote, "wb")
         try:
-            async with sftp.open(remote, "wb") as handle:
+            async with handle:
                 async for chunk in chunks:
                     await handle.write(chunk)
                     total += len(chunk)
@@ -1013,6 +1097,24 @@ def _entry_type(attrs: asyncssh.SFTPAttrs) -> str:
 
 def get(session_id: str) -> SshSession | None:
     return _sessions.get(session_id)
+
+
+def count_for(account_id: int) -> int:
+    return sum(1 for session in _sessions.values() if session.account_id == account_id)
+
+
+def close_account_sessions(account_id: int, detail: str) -> int:
+    """Cuts every live session of an account, safe to call from any thread: sign-out, deletion, a reset by
+    the operator. The sessions notice on their own loop and tell their browsers why."""
+    sessions = [session for session in _sessions.values() if session.account_id == account_id]
+    for session in sessions:
+        loop = session._loop
+        if loop is None or loop.is_closed():
+            continue
+        loop.call_soon_threadsafe(session.cut, END_CUT, detail)
+    if sessions:
+        logger.info("Cutting %s live sessions of account_id=%s: %s", len(sessions), account_id, detail)
+    return len(sessions)
 
 
 def running(account: Account) -> list[SshSession]:

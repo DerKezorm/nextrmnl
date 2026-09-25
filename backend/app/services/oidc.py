@@ -550,7 +550,12 @@ async def verify_id_token(
         )
         raise OidcError("oidc_token_invalid", "The provider's token could not be checked.")
 
-    subject = str(claims["sub"])
+    subject = str(claims["sub"]).strip()
+    if not subject:
+        # ``require`` only insists that the claim exists. An empty subject would later match every account that
+        # has none, so it is refused here, whatever else the token says.
+        logger.warning("OIDC: the id_token carries an empty subject")
+        raise OidcError("oidc_token_invalid", "The provider's token could not be checked.")
     # Always ask userinfo, not only when the address is missing: a provider may send ``email`` in the token and
     # keep ``email_verified`` only here. The signed token keeps the last word, so ``claims`` sits on the right.
     token_claims = dict(claims)

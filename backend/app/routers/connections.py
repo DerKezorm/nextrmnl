@@ -218,6 +218,8 @@ class AccessIn(BaseModel):
     user: str = Field(default="", max_length=64)
     auth: str = Field(default="ask")
     key_id: int | None = None
+    #: Runs in the member's own shell after sign-in. The owner's command never does.
+    start_command: str = Field(default="", max_length=255)
 
 
 @router.put("/{connection_id}/my-access", summary="Own user name, method and key on a connection shared with me")
@@ -237,6 +239,7 @@ def set_my_access(connection_id: int, payload: AccessIn, account: CurrentAccount
     share.user = payload.user.strip()
     share.auth = payload.auth
     share.key_id = payload.key_id if payload.auth == "key" else None
+    share.start_command = payload.start_command.strip()
     db.commit()
     logger.info("Own sign-in set on shared connection id=%s account=%s auth=%s", row.id, account.name, payload.auth)
     return view(db, account, row, _names(db), _host_keys(db))
@@ -245,6 +248,10 @@ def set_my_access(connection_id: int, payload: AccessIn, account: CurrentAccount
 @router.post("/{connection_id}/host-key/forget", status_code=204, summary="Forget the stored host key of this target")
 def forget_host_key(connection_id: int, account: CurrentAccount, db: DbSession) -> None:
     row = accessible(db, account, connection_id)
+    if row.owner_id != account.id and account.role != "operator":
+        # The store is shared by everyone; a member of a share must not be able to make the next contact of
+        # every other account a fresh "unknown host" that hides a changed key.
+        raise fehler("operator_only", "Only the owner of the connection or the operator may forget a host key.", 403)
     key = db.scalar(select(HostKey).where(HostKey.host == row.host.lower(), HostKey.port == row.port))
     if key is not None:
         db.delete(key)

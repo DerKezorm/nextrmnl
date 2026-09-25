@@ -16,7 +16,7 @@ from .services import logs
 logger = logging.getLogger("nextrmnl.api")
 
 #: Paths whose calls explain nothing but fill the log.
-QUIET_PATHS = ("/api/health", "/api/logs", "/api/auth/me", "/api/connections/reach")
+QUIET_PATHS = ("/api/health", "/api/logs", "/api/auth/me", "/api/connections/reach", "/api/sessions/")
 SLOW_MS = 3000
 #: What takes long by nature: backups grow with the database, an SSH connect waits for the network.
 SLOW_EXPECTED = ("/api/backups", "/api/sessions", "/api/vault/file", "/api/oidc/authentik")

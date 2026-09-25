@@ -56,4 +56,6 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
 
 # One worker: SQLite, the open vaults live in this process, and a WebSocket session belongs to one process.
 ENTRYPOINT ["/entrypoint.sh"]
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--workers", "1", "--proxy-headers", "--forwarded-allow-ips", "*"]
+# No --forwarded-allow-ips "*": which proxies may speak for a sender is decided by NEXTRMNL_TRUSTED_PROXIES
+# inside the app, so that nobody can dodge the sign-in brake with a made-up X-Forwarded-For.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--workers", "1"]

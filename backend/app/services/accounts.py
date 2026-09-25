@@ -6,6 +6,7 @@ import logging
 import re
 import secrets
 from datetime import timedelta
+from functools import lru_cache
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -76,46 +77,71 @@ def create_oidc(db: Session, name: str, subject: str, email: str) -> Account:
     return account
 
 
+@lru_cache(maxsize=1)
+def _dummy_hash() -> str:
+    """A hash to verify against when the name is unknown, so that the answer takes as long as for a wrong password
+    and the timing does not tell which names exist."""
+    return hash_password(secrets.token_urlsafe(24))
+
+
+def is_locked(account: Account) -> bool:
+    return account.locked_until is not None and account.locked_until > utcnow()
+
+
+def note_failure(db: Session, account: Account) -> None:
+    """A wrong password or a wrong code: counted per account, locked after too many, whoever the sender is."""
+    account.failed_logins += 1
+    if account.failed_logins >= MAX_FAILURES:
+        account.locked_until = utcnow() + timedelta(minutes=LOCK_MINUTES)
+        account.failed_logins = 0
+        logger.warning("Account locked after %s failures name=%s minutes=%s", MAX_FAILURES, account.name, LOCK_MINUTES)
+    else:
+        logger.warning(
+            "Check failed name=%s (%s of %s before lockout)", account.name, account.failed_logins, MAX_FAILURES
+        )
+    db.commit()
+
+
+def note_success(db: Session, account: Account) -> None:
+    """The whole sign-in went through (password and, if there is one, the second factor)."""
+    account.failed_logins = 0
+    account.locked_until = None
+    account.last_seen_at = utcnow()
+    db.commit()
+
+
 def authenticate(db: Session, name: str, password: str) -> Account:
-    """Checks name and password; counts failures and locks the account after too many."""
+    """Checks name and password; counts failures and locks the account after too many. Does not reset the
+    counters: that happens with ``note_success`` once every step of the sign-in is through."""
     account = by_name(db, name)
-    now = utcnow()
     if account is None or account.sign_in != SIGN_IN_PASSWORD:
-        # Same answer as for a wrong password: a name must not be guessable.
+        # Same answer and the same time as for a wrong password: a name must not be guessable.
+        verify_password(password, _dummy_hash())
         logger.warning("Sign-in failed for unknown account %r", name.strip().lower()[:64])
         raise AccountError("wrong_credentials", "Name or password is wrong.", 401)
-    if account.locked_until is not None and account.locked_until > now:
-        wait = int((account.locked_until - now).total_seconds()) + 1
+    if is_locked(account):
+        wait = int(((account.locked_until or utcnow()) - utcnow()).total_seconds()) + 1
         logger.warning("Sign-in refused, account locked name=%s wait=%ss", account.name, wait)
         raise AccountError("account_locked", "Too many failed sign-ins. Try again later.", 429)
     if not verify_password(password, account.password_hash):
-        account.failed_logins += 1
-        if account.failed_logins >= MAX_FAILURES:
-            account.locked_until = now + timedelta(minutes=LOCK_MINUTES)
-            account.failed_logins = 0
-            logger.warning(
-                "Account locked after %s failures name=%s minutes=%s", MAX_FAILURES, account.name, LOCK_MINUTES
-            )
-        else:
-            logger.warning(
-                "Sign-in failed name=%s (%s of %s before lockout)", account.name, account.failed_logins, MAX_FAILURES
-            )
-        db.commit()
+        note_failure(db, account)
         raise AccountError("wrong_credentials", "Name or password is wrong.", 401)
-    account.failed_logins = 0
-    account.locked_until = None
-    account.last_seen_at = now
-    db.commit()
     return account
+
+
+def check_password(account: Account, password: str) -> bool:
+    """The account's password, for a check while signed in. The caller counts the outcome."""
+    return account.sign_in == SIGN_IN_PASSWORD and verify_password(password, account.password_hash)
 
 
 def change_password(db: Session, account: Account, current: str, new: str) -> None:
     if not verify_password(current, account.password_hash):
         raise AccountError("wrong_password", "The current password is wrong.", 401)
-    account.password_hash = hash_password(new)
-    db.commit()
+    # The vault first: should the rewrap fail, the old password still opens both.
     if account.vault_ready:
         vault.rewrap(db, account, current, new)
+    account.password_hash = hash_password(new)
+    db.commit()
     logger.info("Password changed name=%s", account.name)
 
 

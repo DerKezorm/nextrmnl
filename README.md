@@ -94,7 +94,9 @@ open with the account's password only. Both go into the backup archive.
 | `NEXTRMNL_SECRET_KEY` | created on first start | Protects the server-side secrets; when set, it wins over `secret.key` |
 | `NEXTRMNL_PUBLIC_URL` | from the request | The address people use to reach nextrmnl; for invitation links and the OIDC redirect. The public address under Settings, Sign-in wins when set |
 | `NEXTRMNL_LOG_LEVEL` | stored setting | `quiet`, `normal`, `detailed` or `trace`; overrides the setting, the emergency exit when the app does not start |
+| `NEXTRMNL_TRUSTED_PROXIES` | none | Addresses or networks of reverse proxies whose `X-Forwarded-For` is believed, comma separated (`172.18.0.0/16, 10.0.0.5`). Without it every request counts as coming from its peer, so a proxy in front makes all its clients share one sign-in brake |
 | `NEXTRMNL_SESSION_DAYS` | `14` | A browser session ends after this many days |
+| `NEXTRMNL_API_DOCS` | `false` | Serves `/api/docs` and `/api/openapi.json`; off by default |
 | `NEXTRMNL_COOKIE_SECURE` | `auto` | `on`, `off` or `auto` (from the request or `X-Forwarded-Proto`) |
 | `NEXTRMNL_PORT` | `8000` | Port inside the container, for host networking |
 | `PUID`, `PGID` | `1000` | Owner of the files in the data directory |
@@ -107,6 +109,10 @@ open with the account's password only. Both go into the backup archive.
 - The vault key is wrapped with Argon2id and AES-256-GCM; entries are AES-256-GCM. An open vault is its key in
   the server's memory, forgotten after 30 minutes without use (configurable) and on every restart.
 - Every changing request needs the header `X-Requested-By: nextrmnl`; WebSockets must come from the same origin.
+- Every password check while signed in (opening the vault, exporting it, changing the password, the second
+  factor) counts like a sign-in: wrong answers lock the account. Terminals end with the sign-in they came with.
+- A member of a shared connection signs in with their own user, key or password, and only their own start
+  command runs in their shell; a stored password stays with the host, port and user it was given for.
 - Responses carry a Content Security Policy, `X-Frame-Options: DENY` and friends.
 - Host keys are verified before authentication; nothing is trusted automatically.
 - The log never contains terminal content, keystrokes, passwords, passphrases, private keys or tokens, and a

@@ -38,3 +38,8 @@ services:
       # The address people use to reach nextrmnl, for invitation links and the OIDC redirect. Without it
       # nextrmnl takes the address of the request. The same can be set under Settings, Sign-in, which wins.
       # NEXTRMNL_PUBLIC_URL: https://nextrmnl.example.com
+
+      # Behind a reverse proxy: its address or network, so that X-Forwarded-For is believed from it and the
+      # sign-in brake and the session history see the real clients. Without it the proxy itself counts as the
+      # client for everybody, which is safe but coarse.
+      # NEXTRMNL_TRUSTED_PROXIES: 172.18.0.0/16

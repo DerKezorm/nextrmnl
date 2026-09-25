@@ -26,6 +26,7 @@ import binascii
 import json
 import logging
 import os
+import threading
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -53,10 +54,14 @@ REPLACE = "replace"
 MODES = (MERGE, REPLACE)
 #: A vault file with a thousand keys is a few megabytes; anything beyond this is not one.
 MAX_FILE = 16 * 1024 * 1024
-#: Upper bounds for the Argon2 costs a file may ask for; more would be a way to exhaust the server.
-MAX_TIME_COST = 20
-MAX_MEMORY_KIB = 1024 * 1024
-MAX_PARALLELISM = 16
+#: Upper bounds for the Argon2 costs a file may ask for; more would be a way to exhaust the server. A file
+#: written by nextrmnl carries this installation's costs (64 MiB, three passes by default); these bounds leave
+#: room for a stronger installation without letting one upload pin a gigabyte.
+MAX_TIME_COST = 10
+MAX_MEMORY_KIB = 256 * 1024
+MAX_PARALLELISM = 4
+#: How many key derivations from uploaded files may run at once; each one costs the memory named in the file.
+_KDF_SLOTS = threading.BoundedSemaphore(2)
 
 
 class VaultFileError(Exception):
@@ -103,15 +108,16 @@ def _kdf_now(salt: bytes) -> dict[str, Any]:
 
 def _derive(password: str, salt: bytes, kdf: dict[str, Any]) -> bytes:
     """The same derivation as ``crypto.derive``, with the costs the file names instead of this installation's."""
-    return hash_secret_raw(
-        password.encode("utf-8"),
-        salt,
-        time_cost=int(kdf["time_cost"]),
-        memory_cost=int(kdf["memory_kib"]),
-        parallelism=int(kdf["parallelism"]),
-        hash_len=crypto.KEY_BYTES,
-        type=Type.ID,
-    )
+    with _KDF_SLOTS:
+        return hash_secret_raw(
+            password.encode("utf-8"),
+            salt,
+            time_cost=int(kdf["time_cost"]),
+            memory_cost=int(kdf["memory_kib"]),
+            parallelism=int(kdf["parallelism"]),
+            hash_len=crypto.KEY_BYTES,
+            type=Type.ID,
+        )
 
 
 def _invalid(reason: str) -> VaultFileError:
@@ -162,6 +168,10 @@ def collect(db: Session, account: Account) -> Payload:
     for row in vault.list_passwords(db, account.id):
         connection = db.get(Connection, row.connection_id)
         if connection is None:
+            continue
+        if connection.owner_id != account.id and vault.share_of(db, account.id, connection.id) is None:
+            # A share that was withdrawn: the password stays sealed, the connection's details are not the
+            # account's to take along.
             continue
         passwords.append(
             {
@@ -358,7 +368,7 @@ def import_(db: Session, account: Account, payload: Payload, mode: str = MERGE) 
             result.skipped_passwords += 1
             continue
         try:
-            vault.set_password(db, account, connection_id, secret_text)
+            vault.set_password(db, account, connection_id, secret_text, host=target[0], port=target[1], user=target[2])
         except vault.VaultLocked as error:
             raise _locked() from error
         stored.add(connection_id)

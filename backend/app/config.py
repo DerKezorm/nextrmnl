@@ -42,6 +42,13 @@ class Settings(BaseSettings):
     log_level: str = ""
     #: Where the app is reached from outside, for OIDC redirects. Empty: taken from the request.
     public_url: str = ""
+    #: Addresses or networks of reverse proxies whose ``X-Forwarded-For`` may be believed, comma separated
+    #: (``172.18.0.0/16, 10.0.0.5``). Empty: the header is ignored and the peer address counts, so that a sender
+    #: cannot dodge the sign-in brake by making up addresses.
+    trusted_proxies: str = ""
+    #: Serves /api/docs and /api/openapi.json. Off by default: the route list of a security product is not for
+    #: whoever finds the address.
+    api_docs: bool = False
     default_timezone: str = os.environ.get("TZ", "") or "UTC"
 
     _remembered_key: str | None = PrivateAttr(default=None)

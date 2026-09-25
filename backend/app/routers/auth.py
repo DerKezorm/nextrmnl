@@ -10,7 +10,16 @@ from pydantic import BaseModel, Field
 
 from .. import __version__
 from ..config import get_settings
-from ..deps import CurrentAccount, DbSession, OperatorAccount, check_csrf, client_ip
+from ..deps import (
+    CurrentAccount,
+    DbSession,
+    OperatorAccount,
+    check_csrf,
+    client_ip,
+    reauth_failed,
+    reauth_guard,
+    reauth_succeeded,
+)
 from ..meldungen import fehler, meldung
 from ..models import ROLES, SIGN_IN_PASSWORD, Account
 from ..security import MIN_PASSWORD, SESSION_COOKIE, brake, end_all_sessions, end_session, start_session
@@ -141,11 +150,9 @@ def setup(payload: SetupIn, request: Request, response: Response, db: DbSession)
 @router.post("/auth/login", summary="Sign in with name and password")
 def login(payload: LoginIn, request: Request, response: Response, db: DbSession) -> dict[str, Any]:
     check_csrf(request)
-    if not settings_service.get(db, "password_login"):
-        operator = accounts.by_name(db, payload.name)
-        # The operator keeps the password as the emergency exit even when password sign-in is off.
-        if operator is None or operator.role != "operator":
-            raise fehler("password_login_off", "Sign-in with a password is turned off.", 403)
+    # The brake first, then the password, then the rules: a name is verified (or, for an unknown one, a dummy
+    # hash takes the same time) before any answer differs, so neither the reply nor its timing tells which
+    # names exist.
     key = "login:" + client_ip(request)
     wait = brake.wait_seconds(key)
     if wait:
@@ -160,6 +167,9 @@ def login(payload: LoginIn, request: Request, response: Response, db: DbSession)
         brake.failed(key)
         raise _raise(error) from error
     brake.succeeded(key)
+    if not settings_service.get(db, "password_login") and account.role != "operator":
+        # The operator keeps the password as the emergency exit even when password sign-in is off.
+        raise fehler("password_login_off", "Sign-in with a password is turned off.", 403)
     if account.totp_secret_enc:
         # Nothing opens yet. The vault key is unwrapped now, while the password is at hand, and parked until the
         # code step; the browser gets a short-lived cookie that names the parked sign-in and nothing else.
@@ -172,6 +182,7 @@ def login(payload: LoginIn, request: Request, response: Response, db: DbSession)
         _set_pending_cookie(response, request, totp.start_pending(account.id, vault_key))
         logger.info("Password accepted, second factor pending account=%s", account.name)
         return {"second_factor": True}
+    accounts.note_success(db, account)
     # The password was just given, so the vault opens along with the session.
     if account.vault_ready:
         try:
@@ -179,6 +190,15 @@ def login(payload: LoginIn, request: Request, response: Response, db: DbSession)
         except Exception:  # noqa: BLE001
             vault.lock(account.id)
     return sign_in_response(db, request, response, account)
+
+
+def end_ssh_sessions(account_id: int, detail: str) -> None:
+    """Cuts the live terminals of an account when its sign-in ends. The SSH part is optional at import time."""
+    try:
+        from ..services import ssh
+    except ImportError:  # pragma: no cover
+        return
+    ssh.close_account_sessions(account_id, detail)
 
 
 @router.post("/auth/logout", status_code=204, summary="Sign out in this browser")
@@ -193,7 +213,15 @@ def logout(request: Request, response: Response, db: DbSession) -> None:
     end_session(db, token)
     if account is not None:
         vault.lock(account.id)
+        end_ssh_sessions(account.id, "signed_out")
     response.delete_cookie(SESSION_COOKIE, path="/")
+
+
+@router.post("/auth/logout-all", status_code=204, summary="Sign out every other browser of the own account")
+def logout_everywhere(request: Request, account: CurrentAccount, db: DbSession) -> None:
+    end_all_sessions(db, account.id, except_token=request.cookies.get(SESSION_COOKIE))
+    end_ssh_sessions(account.id, "signed_out")
+    logger.info("All other sessions ended by their owner account=%s", account.name)
 
 
 @router.get("/auth/me", summary="The signed-in account")
@@ -206,12 +234,17 @@ def change_password(payload: PasswordChangeIn, request: Request, account: Curren
     if account.sign_in != SIGN_IN_PASSWORD:
         raise fehler("oidc_account", "This account signs in through OIDC.", 409)
     _check_password(payload.new)
+    reauth_guard(request, account)
     try:
         accounts.change_password(db, account, payload.current, payload.new)
     except AccountError as error:
+        if error.code == "wrong_password":
+            reauth_failed(request, db, account)
         raise _raise(error) from error
-    # Other browsers must sign in again; this one stays.
+    reauth_succeeded(request, db, account)
+    # Other browsers must sign in again; this one stays. Their terminals end with them.
     end_all_sessions(db, account.id, except_token=request.cookies.get(SESSION_COOKIE))
+    end_ssh_sessions(account.id, "signed_out")
     vault.lock(account.id)
     vault.unlock(account, payload.new, int(settings_service.get(db, "vault_lock_minutes")))
 
@@ -252,8 +285,20 @@ def delete_account(account_id: int, operator: OperatorAccount, db: DbSession) ->
     if row is None:
         raise fehler("not_found", "Account not found.", 404)
     vault.lock(row.id)
+    end_ssh_sessions(row.id, "signed_out")
     db.delete(row)
     db.commit()
+
+
+@router.post("/accounts/{account_id}/sign-out", status_code=204, summary="Operator: end every session of an account")
+def sign_out_account(account_id: int, operator: OperatorAccount, db: DbSession) -> None:
+    row = db.get(Account, account_id)
+    if row is None:
+        raise fehler("not_found", "Account not found.", 404)
+    end_all_sessions(db, row.id)
+    vault.lock(row.id)
+    end_ssh_sessions(row.id, "signed_out")
+    logger.warning("All sessions of account=%s ended by operator=%s", row.name, operator.name)
 
 
 class RoleIn(BaseModel):

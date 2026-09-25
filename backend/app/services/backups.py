@@ -93,6 +93,9 @@ TEMPORARY_MAX_AGE = 6 * 3600
 _CHUNK = 1024 * 1024
 #: ``nextrmnl-YYYY-MM-DD-HHMMSS.db``, with a counter when two copies fall into the same second.
 NAME = re.compile(r"^nextrmnl-\d{4}-\d{2}-\d{2}-\d{6}(-\d+)?\.db$")
+#: What a version and a schema fingerprint in a manifest may look like; anything else is not ours.
+VERSION_SHAPE = re.compile(r"^(\d+(\.\d+){0,3})?$")
+SCHEMA_SHAPE = re.compile(r"^(sha256:[0-9a-f]{32})?$")
 SQLITE_HEADER = b"SQLite format 3\x00"
 
 #: The schedule and staging a restore share this lock.
@@ -124,6 +127,8 @@ class Manifest:
 
     @classmethod
     def from_json(cls, raw: str | bytes) -> Manifest:
+        """Reads a manifest and checks every field's shape: the values land in log lines and in the interface,
+        and an uploaded archive is the one place where somebody else wrote them."""
         data = json.loads(raw)
         if not isinstance(data, dict):
             raise TypeError("manifest is not an object")
@@ -132,6 +137,16 @@ class Manifest:
         texts = ("version", "schema", "kind", "note", "created")
         if not all(isinstance(getattr(manifest, name), str) for name in texts):
             raise TypeError("manifest fields have the wrong type")
+        if not VERSION_SHAPE.match(manifest.version) or not SCHEMA_SHAPE.match(manifest.schema):
+            raise TypeError("manifest version or schema have the wrong shape")
+        if manifest.kind not in KINDS:
+            raise TypeError("manifest kind is unknown")
+        try:
+            datetime.fromisoformat(manifest.created)
+        except ValueError as error:
+            raise TypeError("manifest created is no timestamp") from error
+        if len(manifest.note) > 200 or not manifest.note.isprintable():
+            raise TypeError("manifest note is not a plain line")
         manifest.accounts = int(manifest.accounts)
         manifest.connections = int(manifest.connections)
         return manifest

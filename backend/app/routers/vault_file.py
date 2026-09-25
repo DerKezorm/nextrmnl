@@ -9,7 +9,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, File, Form, Request, Response, UploadFile
 from pydantic import BaseModel, Field
 
-from ..deps import CurrentAccount, DbSession
+from ..deps import CurrentAccount, DbSession, reauth_failed, reauth_guard, reauth_succeeded
 from ..meldungen import fehler
 from ..services import settings_service, vault, vault_file
 
@@ -41,10 +41,14 @@ def _server(db: DbSession, request: Request) -> str:
 
 @router.post("/export", summary="Download the own vault as an encrypted file; asks for the vault password again")
 def export_vault(payload: ExportIn, request: Request, account: CurrentAccount, db: DbSession) -> Response:
+    reauth_guard(request, account)
     try:
         data = vault_file.export(db, account, payload.password, _server(db, request))
     except vault_file.VaultFileError as exc:
+        if exc.code == "wrong_password":
+            reauth_failed(request, db, account)
         raise _failed(exc) from exc
+    reauth_succeeded(request, db, account)
     name = f"tresor-{account.name}-{datetime.now(UTC).strftime('%Y-%m-%d')}{vault_file.SUFFIX}"
     return Response(
         content=data,

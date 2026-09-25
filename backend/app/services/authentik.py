@@ -113,8 +113,13 @@ class _Api:
             kind = error.__class__.__name__
             raise StepFailed(f"{method} {path}: the address {self.base_url!r} cannot be used ({kind})") from error
         if not response.is_success:
+            # The status and the content type go back to the operator; the body only into the log. An address
+            # typed by the operator could point at any HTTP service on the network, and its answer is not
+            # something the browser should echo.
             text = response.text.strip().replace("\n", " ")[:DETAIL_MAX]
-            raise StepFailed(f"{method} {path} answered {response.status_code}: {text or 'no body'}")
+            logger.debug("authentik %s %s answered %s: %r", method, path, response.status_code, text)
+            kind = response.headers.get("content-type", "").split(";")[0].strip() or "no content type"
+            raise StepFailed(f"{method} {path} answered {response.status_code} ({kind}); the log has the answer")
         if not response.content:
             return None
         try:
@@ -289,6 +294,11 @@ async def _fill(db: Session, issuer: str, client_id: str, client_secret: str) ->
     cannot reach authentik under this address, which the operator fixes at the network or with a corrected
     address. The stored configuration can be removed with DELETE /api/oidc/config at any time.
     """
+    previous = str(settings_service.get(db, "oidc_issuer") or "")
+    if previous and previous != issuer:
+        from ..routers.oidc import forget_subjects
+
+        forget_subjects(db, previous, issuer)
     settings_service.save(
         db,
         {

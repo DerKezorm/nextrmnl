@@ -29,6 +29,7 @@ from ..db import SessionLocal
 from ..deps import CurrentAccount, DbSession, client_ip, websocket_account
 from ..meldungen import fehler
 from ..models import OPERATOR, Account, SessionRecord
+from ..security import SESSION_COOKIE
 from ..services import ssh
 
 logger = logging.getLogger("nextrmnl.ssh")
@@ -39,6 +40,7 @@ router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 WS_UNAUTHORIZED = 4401
 WS_BAD_REQUEST = 4400
 WS_NOT_FOUND = 4404
+WS_TOO_MANY = 4429
 UPLOAD_LIMIT = 4 * 1024 * 1024 * 1024
 MAX_COLS = 1000
 MAX_ROWS = 1000
@@ -96,9 +98,14 @@ async def terminal(
             target = quick
         # The ORM row is not used after this point; copy what the session needs before the DB session ends.
         holder = Account(id=account.id, name=account.name, role=account.role)
+    if ssh.count_for(holder.id) >= ssh.MAX_SESSIONS_PER_ACCOUNT:
+        await websocket.close(code=WS_TOO_MANY)
+        return
     await websocket.accept()
     size = (_clamp(cols, MAX_COLS, 80), _clamp(rows, MAX_ROWS, 24))
     session = ssh.SshSession(holder, target, client_ip(websocket), *size)
+    # The terminal ends with the sign-in behind it: the session watches its own cookie.
+    session.session_token = websocket.cookies.get(SESSION_COOKIE)
     try:
         await session.run(websocket)
     except Exception:
@@ -229,8 +236,10 @@ async def stat_file(session_id: str, account: CurrentAccount, path: str) -> dict
 
 
 def _disposition(name: str) -> str:
-    ascii_name = name.encode("ascii", "replace").decode("ascii").replace('"', "_").replace("\\", "_")
-    return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(name)}"
+    # A remote file name is foreign text: control characters would split the header, so they go first.
+    clean = "".join(char for char in name if ord(char) >= 0x20 and char != "\x7f") or "download"
+    ascii_name = clean.encode("ascii", "replace").decode("ascii").replace('"', "_").replace("\\", "_")
+    return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(clean)}"
 
 
 @router.get("/{session_id}/files/download", summary="Download a file, streamed")

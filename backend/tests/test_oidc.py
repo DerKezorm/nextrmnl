@@ -197,13 +197,21 @@ def test_a_signed_in_account_links_itself_to_the_provider(
     configure(client, auto_create=False)
     member = invite_member(client, "alex")
     assert member.get("/api/auth/me").json()["oidc_linked"] is False
-    # Linking needs a signed-in browser; a stranger is sent to the sign-in page.
-    stranger = fresh_browser(client)
-    assert stranger.get("/api/oidc/start?link=1", follow_redirects=False).headers["location"] == "/login?error=not_signed_in"
+    # Linking hands the account to whoever the browser is at the provider: it takes a signed-in browser, the
+    # CSRF header and the password. A stranger has none of it, a wrong password is refused, and the old GET
+    # with ``link=1`` starts a plain sign-in and links nothing.
+    from tests.conftest import PASSWORD
 
-    response = member.get("/api/oidc/start?link=1", follow_redirects=False)
-    assert response.status_code == 302
-    values = {k: v[0] for k, v in parse_qs(urlsplit(response.headers["location"]).query).items()}
+    stranger = fresh_browser(client)
+    assert stranger.post("/api/oidc/link/start", json={"password": PASSWORD}, headers=UI).status_code == 401
+    wrong = member.post("/api/oidc/link/start", json={"password": "not-the-password"}, headers=UI)
+    assert wrong.status_code == 401 and wrong.json()["detail"]["code"] == "wrong_password"
+    assert member.get("/api/oidc/start?link=1", follow_redirects=False).status_code == 302
+    assert member.get("/api/auth/me").json()["oidc_linked"] is False
+
+    response = member.post("/api/oidc/link/start", json={"password": PASSWORD}, headers=UI)
+    assert response.status_code == 200, response.text
+    values = {k: v[0] for k, v in parse_qs(urlsplit(response.json()["url"]).query).items()}
     provider.challenge = values["code_challenge"]
     provider.claims = {"nonce": values["nonce"], "sub": "person-7"}
     back = come_back(member, values["state"])
@@ -220,8 +228,8 @@ def test_a_signed_in_account_links_itself_to_the_provider(
     assert account_count() == 2
     # The same identity cannot be hooked to a second account.
     other = invite_member(client, "sam")
-    response = other.get("/api/oidc/start?link=1", follow_redirects=False)
-    values = {k: v[0] for k, v in parse_qs(urlsplit(response.headers["location"]).query).items()}
+    response = other.post("/api/oidc/link/start", json={"password": PASSWORD}, headers=UI)
+    values = {k: v[0] for k, v in parse_qs(urlsplit(response.json()["url"]).query).items()}
     provider.challenge = values["code_challenge"]
     provider.claims = {"nonce": values["nonce"], "sub": "person-7"}
     taken = come_back(other, values["state"])
@@ -357,12 +365,15 @@ def test_provider_error_is_reported_before_the_state_check(
     configure(client)
     browser = fresh_browser(client)
     start(browser, provider)
-    with caplog.at_level(logging.INFO, logger="nextrmnl.oidc"):
+    # Foreign text from a public address goes into the log at DEBUG only: at the default level a stranger who
+    # knows the callback address could otherwise roll the audit lines out of the ring.
+    with caplog.at_level(logging.DEBUG, logger="nextrmnl.oidc"):
         response = browser.get(
             "/api/oidc/callback?error=access_denied&error_description=User%20cancelled%0Aline2", follow_redirects=False
         )
     assert response.headers["location"] == "/login?error=oidc_denied"
     assert "access_denied" in caplog.text
+    assert all(record.levelno == logging.DEBUG for record in caplog.records if "callback refused" in record.message)
     # The foreign text stays on one log line.
     lines = [line for line in caplog.messages if "callback refused" in line]
     assert len(lines) == 1 and "\n" not in lines[0]
@@ -525,7 +536,7 @@ def test_state_is_single_use(
     # The same callback again, with the original cookie sent along by hand: refused before the provider is
     # asked, and refused because the state was used, not because the cookie was missing.
     replay = fresh_browser(client)
-    with caplog.at_level(logging.INFO, logger="nextrmnl.oidc"):
+    with caplog.at_level(logging.DEBUG, logger="nextrmnl.oidc"):
         response = replay.get(
             f"/api/oidc/callback?code={CODE}&state={values['state']}",
             headers={"Cookie": f"{oidc.COOKIE_NAME}={attempt_cookie}"},

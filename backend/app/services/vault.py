@@ -19,7 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .. import crypto
-from ..models import KEY_TYPES, Account, VaultKey, VaultPassword, utcnow
+from ..models import KEY_TYPES, Account, ConnectionShare, VaultKey, VaultPassword, utcnow
 
 logger = logging.getLogger("nextrmnl.vault")
 
@@ -69,9 +69,7 @@ def key_for(account_id: int) -> bytes:
 
 def unlock(account: Account, password: str, idle_minutes: int) -> None:
     """Opens the vault with the account's password; ``crypto.WrongPassword`` if it is not the one."""
-    if not account.vault_ready:
-        raise VaultNotSetUp()
-    key = crypto.unwrap(password, account.vault_salt or b"", account.vault_wrapped or b"")
+    key = unwrap_key(account, password)
     idle = timedelta(minutes=max(1, idle_minutes))
     with _lock:
         _open[account.id] = Opened(key=key, until=utcnow() + idle, idle=idle)
@@ -82,7 +80,7 @@ def unwrap_key(account: Account, password: str) -> bytes:
     """The vault key for a password, without opening the vault; ``crypto.WrongPassword`` if it is not the one."""
     if not account.vault_ready:
         raise VaultNotSetUp()
-    return crypto.unwrap(password, account.vault_salt or b"", account.vault_wrapped or b"")
+    return crypto.unwrap(password, account.vault_salt or b"", account.vault_wrapped or b"", account.vault_kdf or "")
 
 
 def open_with_key(account: Account, key: bytes, idle_minutes: int) -> None:
@@ -122,13 +120,15 @@ def set_up(db: Session, account: Account, password: str) -> None:
     salt, wrapped, _key = crypto.new_vault(password)
     account.vault_salt = salt
     account.vault_wrapped = wrapped
+    account.vault_kdf = crypto.kdf_params_now()
     db.commit()
     logger.info("Vault created account=%s", account.name)
 
 
 def rewrap(db: Session, account: Account, old_password: str, new_password: str) -> None:
-    key = crypto.unwrap(old_password, account.vault_salt or b"", account.vault_wrapped or b"")
+    key = unwrap_key(account, old_password)
     account.vault_salt, account.vault_wrapped = crypto.wrap(key, new_password)
+    account.vault_kdf = crypto.kdf_params_now()
     db.commit()
     logger.info("Vault rewrapped account=%s", account.name)
 
@@ -254,6 +254,10 @@ def list_passwords(db: Session, account_id: int) -> list[VaultPassword]:
     return list(db.scalars(select(VaultPassword).where(VaultPassword.account_id == account_id)))
 
 
+def share_of(db: Session, account_id: int, connection_id: int) -> ConnectionShare | None:
+    return db.get(ConnectionShare, {"connection_id": connection_id, "account_id": account_id})
+
+
 def _password_row(db: Session, account_id: int, connection_id: int) -> VaultPassword | None:
     return db.scalar(
         select(VaultPassword).where(
@@ -262,7 +266,10 @@ def _password_row(db: Session, account_id: int, connection_id: int) -> VaultPass
     )
 
 
-def set_password(db: Session, account: Account, connection_id: int, password: str) -> VaultPassword:
+def set_password(
+    db: Session, account: Account, connection_id: int, password: str, *, host: str = "", port: int = 0, user: str = ""
+) -> VaultPassword:
+    """Stores the password for the connection as it points now: host, port and user are recorded with it."""
     key = key_for(account.id)
     row = _password_row(db, account.id, connection_id)
     if row is None:
@@ -270,14 +277,26 @@ def set_password(db: Session, account: Account, connection_id: int, password: st
         db.add(row)
     row.password_enc = crypto.encrypt_entry(key, password.encode("utf-8"))
     row.changed_at = utcnow()
+    row.host, row.port, row.user = host.strip().lower(), port, user.strip()
     db.commit()
     logger.info("Password stored account=%s connection_id=%s", account.name, connection_id)
     return row
 
 
-def get_password(db: Session, account_id: int, connection_id: int) -> str | None:
+def get_password(
+    db: Session, account_id: int, connection_id: int, *, host: str | None = None, port: int = 0, user: str = ""
+) -> str | None:
+    """The stored password, but only for the target it was stored for. Somebody else's shared connection can be
+    pointed at another machine at any time; the member's password must not follow it there."""
     row = _password_row(db, account_id, connection_id)
     if row is None:
+        return None
+    if host is not None and row.host and (row.host, row.port, row.user) != (host.strip().lower(), port, user.strip()):
+        logger.warning(
+            "Stored password not used, the connection points elsewhere now account_id=%s connection_id=%s",
+            account_id,
+            connection_id,
+        )
         return None
     return crypto.decrypt_entry(key_for(account_id), row.password_enc).decode("utf-8")
 

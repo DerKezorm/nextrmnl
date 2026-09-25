@@ -79,6 +79,8 @@ class Account(Base):
     #: Salt and wrapped vault key. Both empty until the vault is set up (OIDC accounts choose a vault password).
     vault_salt: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     vault_wrapped: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    #: The Argon2 costs the vault key was wrapped with (JSON). Empty: the installation's current costs.
+    vault_kdf: Mapped[str] = mapped_column(Text, default="")
     #: Terminal and clipboard preferences, free JSON for the frontend.
     prefs: Mapped[Any] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow)
@@ -150,6 +152,11 @@ class VaultPassword(Base):
     connection_id: Mapped[int] = mapped_column(ForeignKey("connections.id", ondelete="CASCADE"), index=True)
     password_enc: Mapped[bytes] = mapped_column(LargeBinary)
     changed_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow)
+    #: The target the password was stored for. A shared connection belongs to somebody else, who may point it
+    #: elsewhere later; the password goes only to the host, port and user it was given for.
+    host: Mapped[str] = mapped_column(String(255), default="")
+    port: Mapped[int] = mapped_column(Integer, default=0)
+    user: Mapped[str] = mapped_column(String(64), default="")
 
 
 AUTH_KEY = "key"
@@ -192,6 +199,8 @@ class ConnectionShare(Base):
     user: Mapped[str] = mapped_column(String(64), default="")
     auth: Mapped[str] = mapped_column(String(16), default=AUTH_ASK)
     key_id: Mapped[int | None] = mapped_column(ForeignKey("vault_keys.id", ondelete="SET NULL"), nullable=True)
+    #: The member's own command after sign-in. The owner's command never runs in a member's shell.
+    start_command: Mapped[str] = mapped_column(String(255), default="")
 
 
 class HostKey(Base):

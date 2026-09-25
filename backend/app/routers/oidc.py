@@ -30,9 +30,17 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 
 from .. import crypto
-from ..deps import CurrentAccount, DbSession, OperatorAccount, client_ip
+from ..deps import (
+    CurrentAccount,
+    DbSession,
+    OperatorAccount,
+    client_ip,
+    reauth_failed,
+    reauth_guard,
+    reauth_succeeded,
+)
 from ..meldungen import fehler
-from ..models import SIGN_IN_OIDC, Account
+from ..models import SIGN_IN_OIDC, SIGN_IN_PASSWORD, Account
 from ..security import SESSION_COOKIE, brake, session_account, start_session
 from ..services import accounts, authentik, logs, oidc, settings_service
 from .auth import _secure, _set_cookie
@@ -83,9 +91,7 @@ async def write_config(payload: ConfigIn, operator: OperatorAccount, request: Re
         raise fehler(code, error.message, 422, reason=error.code) from error
     previous = str(settings_service.get(db, "oidc_issuer") or "")
     if previous and previous != issuer:
-        # Subjects are stored without the issuer; accounts keep theirs. A different provider may hand out
-        # different subjects for the same people, and then the verified address is the only bridge left.
-        logger.warning("OIDC issuer changed from %r to %r, existing accounts keep their subjects", previous, issuer)
+        forget_subjects(db, previous, issuer)
     values = {
         "oidc_issuer": issuer,
         "oidc_client_id": payload.client_id.strip(),
@@ -114,29 +120,20 @@ def state(db: DbSession) -> dict[str, Any]:
     return {"enabled": _configured(db), "provider_name": _provider_name(db)}
 
 
-@router.get("/start", summary="Send the browser to the provider (no sign-in needed)")
-async def start(request: Request, db: DbSession, link: bool = False) -> RedirectResponse:
-    # Public: this is the sign-in button. Failures land on the sign-in page with a code; a JSON error here
-    # would be seen only by the person least able to do anything with it.
-    link_account_id: int | None = None
-    if link:
-        # Linking needs somebody signed in; the account is remembered in the attempt cookie, and the callback
-        # checks that the same session is still there.
-        current = session_account(db, request.cookies.get(SESSION_COOKIE))
-        if current is None:
-            return _to_login("not_signed_in")
-        link_account_id = current.id
-    if not _configured(db):
-        return _to_account("oidc_not_configured") if link else _to_login("oidc_not_configured")
-    try:
-        description = await oidc.discovery(str(settings_service.get(db, "oidc_issuer")))
-    except oidc.OidcError as error:
-        logger.warning("OIDC sign-in could not be started: %s", error.code)
-        return _to_account(error.code) if link else _to_login(error.code)
-    attempt = oidc.new_attempt()
-    client_id = str(settings_service.get(db, "oidc_client_id"))
-    url = oidc.authorization_url(description, client_id, _redirect_uri(db, request), attempt)
-    response = RedirectResponse(url, status_code=302)
+def forget_subjects(db: DbSession, previous: str, issuer: str) -> None:
+    """A subject is only meaningful together with the provider that issued it. When the issuer changes, every
+    stored subject is dropped: user "3" at the new provider must not inherit what user "3" at the old one
+    owned. Accounts link themselves again, under their account or through the verified address."""
+    from sqlalchemy import update
+
+    count = db.execute(update(Account).where(Account.oidc_subject != "").values(oidc_subject="")).rowcount or 0
+    db.commit()
+    logger.warning("OIDC issuer changed from %r to %r, %s account links dropped", previous, issuer, count)
+
+
+def _set_attempt_cookie(
+    response: Response, request: Request, attempt: oidc.Attempt, link_account_id: int | None
+) -> None:
     response.set_cookie(
         oidc.COOKIE_NAME,
         oidc.pack_attempt(attempt, link_account_id),
@@ -149,7 +146,57 @@ async def start(request: Request, db: DbSession, link: bool = False) -> Redirect
         samesite="lax",
         secure=_secure(request),
     )
+
+
+@router.get("/start", summary="Send the browser to the provider (no sign-in needed)")
+async def start(request: Request, db: DbSession) -> RedirectResponse:
+    # Public: this is the sign-in button. Failures land on the sign-in page with a code; a JSON error here
+    # would be seen only by the person least able to do anything with it.
+    if not _configured(db):
+        return _to_login("oidc_not_configured")
+    try:
+        description = await oidc.discovery(str(settings_service.get(db, "oidc_issuer")))
+    except oidc.OidcError as error:
+        logger.warning("OIDC sign-in could not be started: %s", error.code)
+        return _to_login(error.code)
+    attempt = oidc.new_attempt()
+    client_id = str(settings_service.get(db, "oidc_client_id"))
+    url = oidc.authorization_url(description, client_id, _redirect_uri(db, request), attempt)
+    response = RedirectResponse(url, status_code=302)
+    _set_attempt_cookie(response, request, attempt, None)
     return response
+
+
+class LinkStartIn(BaseModel):
+    password: str = Field(max_length=200)
+
+
+@router.post("/link/start", summary="Start linking the own account to the provider; needs the password")
+async def start_link(
+    payload: LinkStartIn, request: Request, response: Response, account: CurrentAccount, db: DbSession
+) -> dict[str, Any]:
+    """Linking hands the account to whoever the browser is at the provider, so it is a POST with the CSRF
+    header and the password: a page elsewhere cannot start it, and neither can somebody at an unattended
+    browser. The browser then goes to the address in the answer; the callback finishes the link."""
+    if account.sign_in != SIGN_IN_PASSWORD:
+        raise fehler("oidc_only_account", "This account signs in through the provider already.", 409)
+    reauth_guard(request, account)
+    if not accounts.check_password(account, payload.password):
+        reauth_failed(request, db, account)
+        raise fehler("wrong_password", "The password is wrong.", 401)
+    reauth_succeeded(request, db, account)
+    if not _configured(db):
+        raise fehler("oidc_not_configured", "OpenID Connect is not set up.", 409)
+    try:
+        description = await oidc.discovery(str(settings_service.get(db, "oidc_issuer")))
+    except oidc.OidcError as error:
+        raise fehler(error.code, error.message, 502) from error
+    attempt = oidc.new_attempt()
+    client_id = str(settings_service.get(db, "oidc_client_id"))
+    url = oidc.authorization_url(description, client_id, _redirect_uri(db, request), attempt)
+    _set_attempt_cookie(response, request, attempt, account.id)
+    logger.info("Account %s starts linking to the provider", account.name)
+    return {"url": url}
 
 
 @router.get("/callback", summary="The return from the provider (no sign-in needed)")
@@ -161,25 +208,30 @@ async def callback(
     error: str | None = None,
     error_description: str | None = None,
 ) -> RedirectResponse:
-    # Public by nature: the provider sends the browser here. The order of the checks is deliberate: first our
-    # own state (cookie, state), then the brake, then the provider, then the account. Nothing is written before
-    # everything in front of it has passed, and every exit leaves a line in the log.
+    # Public by nature: the provider sends the browser here. The order of the checks is deliberate: is OIDC on
+    # at all, is the sender braked, then our own state (cookie, state), then the provider, then the account.
+    # Nothing is written before everything in front of it has passed. What fails before the provider was ever
+    # asked can be produced for free by anyone who knows the address, so those exits leave only a DEBUG line;
+    # foreign text goes into the log at that level only, truncated and repr'd, and never pushes the audit lines
+    # out of the ring.
     attempt = oidc.read_attempt(request.cookies.get(oidc.COOKIE_NAME))
     linking = attempt is not None and attempt.get("link") is not None
 
     def refuse(code_out: str, reason: str, *, real: bool = True) -> RedirectResponse:
-        # Everything before the brake can be produced without any provider, the callback address is public;
-        # on WARNING a stranger could fill the operator's log. What fails after it had a real run behind it.
         line = "OIDC callback refused (%s): code=%s"
         if real:
             logger.warning(line, reason, code_out)
         else:
-            logger.info(line, reason, code_out)
+            logger.debug(line, reason, code_out)
         return _to_account(code_out) if linking else _to_login(code_out)
 
+    if not _configured(db):
+        return refuse("oidc_not_configured", "OIDC is not set up", real=False)
+    key = "oidc:" + client_ip(request)
+    if brake.wait_seconds(key):
+        return refuse("too_many_attempts", "sender is braked", real=False)
     if error:
         # Checked before the state: a return with ``error`` carries no code and not necessarily a usable state.
-        # ``!r`` keeps a foreign text with line breaks on one log line.
         reason = f"provider returned error={error[:FOREIGN_TEXT_MAX]!r}"
         if error_description:
             reason += f" description={error_description[:FOREIGN_TEXT_MAX]!r}"
@@ -193,15 +245,6 @@ async def callback(
     if not oidc.consume_state(state):
         return refuse("oidc_state_mismatch", "state was already used", real=False)
 
-    # The brake counts per sender and only from here on: what fails before this never saw the provider and
-    # can be produced for free. There is no secret to guess at this address, so the brake protects the
-    # provider from being hammered, nothing more; it must never key on something shared by everybody.
-    key = "oidc:" + client_ip(request)
-    if brake.wait_seconds(key):
-        return refuse("too_many_attempts", "sender is braked", real=False)
-
-    if not _configured(db):
-        return refuse("oidc_not_configured", "OIDC was switched off while the browser was at the provider")
     issuer = str(settings_service.get(db, "oidc_issuer"))
     client_id = str(settings_service.get(db, "oidc_client_id"))
     # Decrypted outside the try: ``decrypt_secret`` does not raise, it returns "" for a foreign secret.key, and
@@ -226,6 +269,9 @@ async def callback(
     if isinstance(account, str):
         return refuse(account, f"no account for this identity: {account} address={oidc.masked(identity.email)}")
 
+    # A password account that arrives through the provider is not asked for nextrmnl's own second factor: on
+    # this path the provider is in charge of that, as the account page says. The required mode still binds it
+    # (``setup_required``), because the account can also sign in with its password.
     response = RedirectResponse(HOME, status_code=303)
     _delete_attempt_cookie(response)
     token = start_session(db, account, client_ip(request), request.headers.get("user-agent", ""))
@@ -316,6 +362,8 @@ def _finish_link(
     current = session_account(db, request.cookies.get(SESSION_COOKIE))
     if current is None or current.id != attempt.get("link"):
         return refuse("oidc_link_mismatch", "the linking attempt does not belong to the signed-in account")
+    if not identity.subject.strip():
+        return refuse("oidc_token_invalid", "the provider sent an empty subject")
     other = db.scalar(select(Account).where(Account.oidc_subject == identity.subject, Account.id != current.id))
     if other is not None:
         return refuse("oidc_subject_taken", f"this identity already belongs to account {other.name!r}")
@@ -334,7 +382,10 @@ def _finish_link(
 def unlink(account: CurrentAccount, db: DbSession) -> None:
     if account.sign_in == SIGN_IN_OIDC:
         raise fehler("oidc_only_account", "This account has no password; it signs in through the provider only.", 409)
+    # The address goes with the link: it came from the provider, and left in place it would let the next
+    # sign-in there re-link the account through the verified-address bridge as if nothing had been undone.
     account.oidc_subject = ""
+    account.email = ""
     db.commit()
     logger.info("Account %s unlinked from its OIDC identity", account.name)
 
@@ -347,6 +398,10 @@ def _resolve(db: DbSession, identity: oidc.Identity, auto_create: bool) -> Accou
        a different subject is not taken over; two people at the provider may not share one vault.
     3. Otherwise a new member account, but only with a verified address and only if the operator allows it.
     """
+    if not identity.subject.strip():
+        # An empty subject would match every account that has none; the provider is misconfigured, not us.
+        logger.warning("OIDC sign-in refused: the provider sent an empty subject")
+        return "oidc_token_invalid"
     existing = db.scalar(select(Account).where(Account.oidc_subject == identity.subject))
     if existing is not None:
         return existing

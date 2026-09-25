@@ -1,0 +1,15 @@
+.git
+.gitignore
+.claude
+CLAUDE.md
+data
+data-*
+pruefung
+tools
+frontend/node_modules
+frontend/dist
+backend/.venv
+backend/.pytest_cache
+backend/.ruff_cache
+backend/tests
+**/__pycache__

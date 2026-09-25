@@ -1,0 +1,15 @@
+fastapi==0.141.1
+uvicorn[standard]==0.54.0
+sqlalchemy==2.1.1
+pydantic==2.13.5
+pydantic-settings==2.15.0
+argon2-cffi==25.1.0
+cryptography==50.0.1
+asyncssh==2.24.0
+# asyncssh needs bcrypt for passphrase-protected OpenSSH keys.
+bcrypt==5.0.0
+pyzipper==0.4.0
+httpx==0.28.1
+python-multipart==0.0.32
+# PyJWT checks the id tokens of the OIDC provider and signs the short-lived sign-in attempt cookie.
+pyjwt==2.15.0

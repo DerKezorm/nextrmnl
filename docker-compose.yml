@@ -1,0 +1,40 @@
+# nextrmnl, start with:  docker compose up -d
+#
+# Then open http://<your-host>:8460 and create the operator account.
+#
+# ⚠️ Put nextrmnl behind a reverse proxy with TLS before you use it from anywhere but your own desk. It holds
+# the access to your machines, and pasting with a right click needs HTTPS anyway.
+#
+# To build from source instead of pulling the image, comment out `image:` and uncomment `build: .`.
+
+services:
+  nextrmnl:
+    image: ghcr.io/derkezorm/nextrmnl:latest
+    # build: .
+    container_name: nextrmnl
+    restart: unless-stopped
+
+    ports:
+      # Host port on the left, container port on the right.
+      - "8460:8000"
+
+    volumes:
+      # ⚠️ A local disk, never an SMB or NFS share. SQLite's locking does not work reliably over network
+      # filesystems, and that is how it loses data.
+      - ./data:/data
+
+    environment:
+      # Who should own the files in the data directory. The container fixes the permissions itself on startup.
+      PUID: 1000
+      PGID: 1000
+
+      TZ: Europe/Berlin
+
+      # Protects the server-side secrets (OIDC client secret). Leaving it empty is fine: nextrmnl creates one on
+      # first start and keeps it as /data/secret.key. The vaults do not depend on it; they open with the
+      # account's password only.
+      NEXTRMNL_SECRET_KEY: ${NEXTRMNL_SECRET_KEY:-}
+
+      # The address people use to reach nextrmnl, for invitation links and the OIDC redirect. Without it
+      # nextrmnl takes the address of the request. The same can be set under Settings, Sign-in, which wins.
+      # NEXTRMNL_PUBLIC_URL: https://nextrmnl.example.com

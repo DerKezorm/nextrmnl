@@ -1,0 +1,23 @@
+# Second opinion next to a local scanner that runs in the git hooks and is not
+# part of the repository.
+#
+# Everything here is an allowlist. Nothing is switched off: a rule that fires
+# on made-up data on every push is a rule somebody stops reading, and then the
+# one real finding goes past unnoticed.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Placeholders and made-up data that are meant to be read."
+paths = [
+  '''package-lock\.json''',
+  '''\.svg$''',
+  '''\.png$''',
+  '''\.ico$''',
+  '''\.woff2$''',
+]
+regexes = [
+  # The reserved documentation domain.
+  '''example\.(com|org|net)''',
+]

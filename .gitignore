@@ -1,0 +1,15 @@
+# Frontend
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Backend
+backend/.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+
+# Runtime data: database, secret.key, backups, logs. Never in the repo.
+data/
+data-*/
+.env

@@ -21,7 +21,7 @@ const APPS = [
   { key: 'nexmail', site: 'https://nexmail.nexapps.dev', repo: 'https://github.com/DerKezorm/nexmail' },
   { key: 'nexdeck', site: 'https://nexdeck.nexapps.dev', repo: 'https://github.com/DerKezorm/nexdeck' },
   { key: 'nexcrate', site: 'https://nexcrate.nexapps.dev', repo: 'https://github.com/DerKezorm/nexcrate' },
-  { key: 'nexbeat', repo: 'https://github.com/DerKezorm/nexbeat' },
+  { key: 'nexbeat', site: 'https://nexbeat.nexapps.dev', repo: 'https://github.com/DerKezorm/nexbeat' },
   { key: 'nexpulse', repo: 'https://github.com/DerKezorm/nexpulse' },
 ] as const
 

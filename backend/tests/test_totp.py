@@ -61,7 +61,8 @@ def enrol(client: TestClient) -> tuple[str, list[str]]:
     assert begun.status_code == 200, begun.text
     secret = begun.json()["secret"]
     assert begun.json()["uri"].startswith("otpauth://totp/nextrmnl:")
-    assert "<svg" in begun.json()["qr_svg"]
+    # ⚠️ Shown as a data: image, and a browser draws an SVG there only with its namespace.
+    assert begun.json()["qr_svg"].startswith('<svg xmlns="http://www.w3.org/2000/svg"')
     confirmed = client.post("/api/auth/totp/confirm", json={"code": current_code(secret), "password": PASSWORD}, headers=UI)
     assert confirmed.status_code == 200, confirmed.text
     codes = confirmed.json()["recovery_codes"]

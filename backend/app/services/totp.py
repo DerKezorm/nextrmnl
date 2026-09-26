@@ -20,6 +20,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import io
 import json
 import secrets
 import struct
@@ -106,8 +107,17 @@ def provisioning_uri(seed: str, account_name: str) -> str:
 
 
 def qr_svg(uri: str) -> str:
-    """The QR code as inline SVG, light modules transparent so it sits on any background."""
-    return segno.make(uri, error="m").svg_inline(scale=4, dark="#e5e7eb", light=None, border=2)
+    """The QR code as SVG, light modules transparent so it sits on any background.
+
+    ⚠️ With the SVG namespace. The frontend shows it as a ``data:`` image, and
+    a browser draws an SVG in an ``<img>`` only when it names its namespace.
+    ``svg_inline`` leaves it out (it is meant for markup inside HTML), and the
+    dialog showed a broken image where the code belonged.
+    """
+    out = io.BytesIO()
+    code = segno.make(uri, error="m")
+    code.save(out, kind="svg", scale=4, dark="#e5e7eb", light=None, border=2, xmldecl=False, svgns=True)
+    return out.getvalue().decode("utf-8")
 
 
 # --- Recovery codes -------------------------------------------------------------------------------------------- #

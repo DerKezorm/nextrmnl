@@ -275,6 +275,11 @@ async def _probe(host: str, port: int) -> tuple[str, int | None]:
 
 @router.get("/reach", summary="Is the TCP port of each connection reachable? Only for allowed targets")
 async def reach(account: CurrentAccount, db: DbSession) -> dict[str, dict[str, Any]]:
+    return {str(connection_id): data for connection_id, data in (await reach_of(db, account)).items()}
+
+
+async def reach_of(db: DbSession, account: Account) -> dict[int, dict[str, Any]]:
+    """Each visible connection's port, probed, but only where the allowed targets let nextrmnl go."""
     mode = settings_service.get(db, "targets_mode")
     entries = targets.parse_list(settings_service.get(db, "targets_list"))
     rows = visible(db, account)
@@ -289,7 +294,7 @@ async def reach(account: CurrentAccount, db: DbSession) -> dict[str, dict[str, A
         return row.id, {"reach": state, "latency_ms": latency}
 
     results = await asyncio.gather(*(one(row) for row in rows))
-    return {str(connection_id): data for connection_id, data in results}
+    return dict(results)
 
 
 def touch(db: DbSession, connection_id: int | None) -> None:

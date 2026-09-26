@@ -23,6 +23,7 @@ from app.db import SessionLocal, init_db  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models import (  # noqa: E402
     Account,
+    ApiKey,
     AuthSession,
     Connection,
     ConnectionShare,
@@ -44,7 +45,7 @@ PASSWORD = "correct-horse-battery"
 def clean_db() -> Iterator[None]:
     init_db()
     with SessionLocal() as db:
-        for model in (SessionRecord, VaultPassword, ConnectionShare, Connection, VaultKey, HostKey, Invite, AuthSession, Account, Setting):
+        for model in (ApiKey, SessionRecord, VaultPassword, ConnectionShare, Connection, VaultKey, HostKey, Invite, AuthSession, Account, Setting):
             db.execute(delete(model))
         db.commit()
     vault.lock_all()

@@ -176,6 +176,8 @@ export interface Settings {
   vault_lock_minutes: number
   history_days: number
   update_check: boolean
+  /** Read-only API keys for dashboards; closed until the operator opens it. */
+  api_keys_allowed: boolean
   backup_schedule: BackupSchedule
   backup_keep: number
   password_login: boolean
@@ -183,6 +185,25 @@ export interface Settings {
   oidc_auto_create: boolean
   /** The address people use to reach nextrmnl; empty means the environment or the request decides. */
   public_url: string
+}
+
+export interface ApiKeyInfo {
+  id: number
+  name: string
+  /** The first characters, to tell keys apart; the key itself is never shown again. */
+  prefix: string
+  created_by: string
+  created_at: string
+  last_used_at: string | null
+}
+
+export interface ApiKeyList {
+  allowed: boolean
+  keys: ApiKeyInfo[]
+}
+
+export interface ApiKeyCreated extends ApiKeyInfo {
+  key: string
 }
 
 export interface AboutInfo {

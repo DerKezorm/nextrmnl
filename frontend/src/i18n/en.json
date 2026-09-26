@@ -52,6 +52,26 @@
     "unlink": "Remove the link",
     "unlinked": "Link removed."
   },
+  "apiKeys": {
+    "title": "API keys for dashboards",
+    "lead": "A dashboard such as nexdeck can show live sessions, the latest sessions and whether your connections answer. A key only reads: no terminal, no files, no vault, no changes. Who connected from which address stays here.",
+    "allow": "Allow API keys",
+    "allowHint": "Off, every key is refused, and none is deleted. Switching it off stops every dashboard at once.",
+    "offNote": "Keys can be made while API keys are off; they work once you allow them.",
+    "name": "Name of a new key",
+    "create": "Create key",
+    "madeBy": "made by {{name}}",
+    "lastUsed": "last used {{when}}",
+    "neverUsed": "not used yet",
+    "delete": "Delete",
+    "createdTitle": "Your new API key",
+    "createdLead": "Enter it in the dashboard, for nexdeck under Connections, nextrmnl.",
+    "createdWarning": "This is the only time the key is shown. nextrmnl keeps only a fingerprint of it; if it is lost, delete it and make a new one.",
+    "copy": "Copy key",
+    "deleteTitle": "Delete the key {{name}}?",
+    "deleteText": "Every dashboard using this key stops at once.",
+    "deleteNow": "Delete key"
+  },
   "auth": {
     "inviteInvalid": "This invitation is not valid any more. Ask for a new one.",
     "inviteLead": "You get an account as {{role}}. Choose a name and a password.",
@@ -271,7 +291,10 @@
       "totp_enrolment_expired": "The enrolment timed out. Start again.",
       "totp_not_enabled": "The second factor is not on.",
       "use_disable": "You turn your own second factor off under Account, with your password.",
-      "wrong_password": "The password is wrong."
+      "wrong_password": "The password is wrong.",
+      "api_key_name_missing": "Give the key a name.",
+      "api_key_name_too_long": "The name may be 64 characters at most.",
+      "api_key_limit": "There are already 20 keys. Delete one first."
     },
     "generic": "Something went wrong.",
     "http": "The server answered with an error (HTTP {{status}}).",

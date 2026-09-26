@@ -23,6 +23,7 @@ class SettingsIn(BaseModel):
     vault_lock_minutes: int | None = Field(default=None, ge=1, le=1440)
     history_days: int | None = Field(default=None, ge=1, le=3650)
     update_check: bool | None = None
+    api_keys_allowed: bool | None = None
     backup_schedule: str | None = None
     backup_keep: int | None = Field(default=None, ge=2, le=50)
     password_login: bool | None = None

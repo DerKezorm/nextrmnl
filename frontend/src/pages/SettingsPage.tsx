@@ -15,6 +15,7 @@ import { formatDateTime, formatRelative } from '../lib/format'
 import { MIN_PASSWORD } from '../lib/rules'
 import { PREFS_EVENT, setTerminalPref, terminalPrefs, type TerminalPrefs } from '../lib/terminalPrefs'
 import { useLoad } from '../lib/useLoad'
+import { ApiKeysSection } from './settings/ApiKeys'
 import { BackupTab } from './settings/BackupTab'
 import { LogTab } from './settings/LogTab'
 import { SecondFactorSection } from './settings/SecondFactor'
@@ -879,6 +880,9 @@ function SecuritySettings() {
       <Section title={t('security.updatesTitle')} intro={t('security.updatesLead')}>
         <Switch label={t('security.updateCheck')} hint={t('security.updateCheckHint')} checked={data.update_check} onChange={(value) => void save({ update_check: value })} />
       </Section>
+
+      {/* The third way out: what a dashboard may read. */}
+      <ApiKeysSection allowed={data.api_keys_allowed} onToggle={(value) => void save({ api_keys_allowed: value })} />
 
       <Section title={t('security.otherTitle')}>
         <div className="grid gap-4 sm:grid-cols-2">

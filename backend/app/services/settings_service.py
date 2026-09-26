@@ -25,6 +25,8 @@ DEFAULTS: dict[str, Any] = {
     "history_days": 90,
     #: The only call that leaves the house; off until the operator turns it on.
     "update_check": False,
+    #: Read-only API keys for dashboards: another way out, closed until the operator opens it.
+    "api_keys_allowed": False,
     "backup_schedule": "weekly",
     "backup_keep": 5,
     "password_login": True,
@@ -52,6 +54,7 @@ PUBLIC_KEYS = (
     "vault_lock_minutes",
     "history_days",
     "update_check",
+    "api_keys_allowed",
     "backup_schedule",
     "backup_keep",
     "password_login",

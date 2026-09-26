@@ -52,6 +52,26 @@
     "unlink": "Verknüpfung lösen",
     "unlinked": "Verknüpfung gelöst."
   },
+  "apiKeys": {
+    "title": "API-Schlüssel für Dashboards",
+    "lead": "Ein Dashboard wie nexdeck kann laufende Sitzungen, die letzten Sitzungen und die Erreichbarkeit deiner Verbindungen zeigen. Ein Schlüssel liest nur: kein Terminal, keine Dateien, kein Tresor, keine Änderungen. Wer sich von welcher Adresse aus verbunden hat, bleibt hier.",
+    "allow": "API-Schlüssel erlauben",
+    "allowHint": "Aus heißt: Jeder Schlüssel wird abgewiesen, gelöscht wird keiner. Ausschalten hält jedes Dashboard sofort an.",
+    "offNote": "Schlüssel lassen sich anlegen, solange API-Schlüssel aus sind; sie gelten, sobald du sie erlaubst.",
+    "name": "Name eines neuen Schlüssels",
+    "create": "Schlüssel anlegen",
+    "madeBy": "angelegt von {{name}}",
+    "lastUsed": "zuletzt benutzt {{when}}",
+    "neverUsed": "noch nicht benutzt",
+    "delete": "Löschen",
+    "createdTitle": "Dein neuer API-Schlüssel",
+    "createdLead": "Trag ihn im Dashboard ein, bei nexdeck unter Anbindungen, nextrmnl.",
+    "createdWarning": "Nur jetzt wird der Schlüssel angezeigt. nextrmnl behält nur einen Fingerabdruck davon; geht er verloren, lösch ihn und leg einen neuen an.",
+    "copy": "Schlüssel kopieren",
+    "deleteTitle": "Den Schlüssel {{name}} löschen?",
+    "deleteText": "Jedes Dashboard, das diesen Schlüssel benutzt, hält sofort an.",
+    "deleteNow": "Schlüssel löschen"
+  },
   "auth": {
     "inviteInvalid": "Diese Einladung gilt nicht mehr. Bitte um eine neue.",
     "inviteLead": "Du bekommst ein Konto als {{role}}. Wähle Name und Passwort.",
@@ -271,7 +291,10 @@
       "totp_enrolment_expired": "Die Einrichtung ist abgelaufen. Fang noch einmal an.",
       "totp_not_enabled": "Der zweite Faktor ist nicht eingeschaltet.",
       "use_disable": "Deinen eigenen zweiten Faktor schaltest du unter Konto mit deinem Passwort aus.",
-      "wrong_password": "Das Passwort stimmt nicht."
+      "wrong_password": "Das Passwort stimmt nicht.",
+      "api_key_name_missing": "Gib dem Schlüssel einen Namen.",
+      "api_key_name_too_long": "Der Name darf höchstens 64 Zeichen haben.",
+      "api_key_limit": "Es gibt schon 20 Schlüssel. Lösch zuerst einen."
     },
     "generic": "Da ist etwas schiefgegangen.",
     "http": "Der Server hat mit einem Fehler geantwortet (HTTP {{status}}).",

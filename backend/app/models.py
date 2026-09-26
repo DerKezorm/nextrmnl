@@ -108,6 +108,22 @@ class AuthSession(Base):
     user_agent: Mapped[str] = mapped_column(String(255), default="")
 
 
+class ApiKey(Base):
+    """A read-only key for dashboards such as nexdeck. Only the hash is stored; the key is shown once."""
+
+    __tablename__ = "api_keys"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(64))
+    #: The first characters of the key, so the operator can tell keys apart without seeing one again.
+    prefix: Mapped[str] = mapped_column(String(16))
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    #: The operator who made it. The key reads what that account may read, and stops when it is no operator.
+    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), index=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow)
+    last_used_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
+
+
 class Invite(Base):
     __tablename__ = "invites"
 

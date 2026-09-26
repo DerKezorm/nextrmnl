@@ -48,6 +48,9 @@ is at [nextrmnl.nexapps.dev](https://nextrmnl.nexapps.dev).
   ZIP that 7-Zip opens without nextrmnl, restore with a preview and a restart.
 - **A log** with four levels (the deep ones switch themselves off), a request id in every line and in every
   error message, downloadable. Never with terminal content, keystrokes, passwords, keys or tokens.
+- **Read-only API keys** for dashboards such as [nexdeck](https://nexdeck.nexapps.dev): four endpoints under
+  `/api/v1` (`status`, `sessions`, `history`, `connections`) with the key as `Authorization: Bearer`. Off by
+  default; the operator switches them on and creates them under Settings, Security.
 - German and English; another language is one JSON file.
 
 ## Start
@@ -116,6 +119,9 @@ open with the account's password only. Both go into the backup archive.
   command runs in their shell; a stored password stays with the host, port and user it was given for.
 - Responses carry a Content Security Policy, `X-Frame-Options: DENY` and friends.
 - Host keys are verified before authentication; nothing is trusted automatically.
+- API keys only read. A key is shown once and stored as a hash, works only as a Bearer header, and stops working
+  when the switch goes off or its account is no longer the operator. It opens no terminal, no file and no vault,
+  and what it reads carries no sender addresses.
 - The log never contains terminal content, keystrokes, passwords, passphrases, private keys or tokens, and a
   test scans the code for the obvious mistakes.
 

@@ -4,7 +4,8 @@ SSH and SFTP in the browser, self-hosted, for the machines in your own network. 
 host keys that are checked and remembered, and a terminal that copies and pastes the way PuTTY and Windows
 Terminal do.
 
-nextrmnl is part of the nex apps and looks like them.
+nextrmnl is part of the nex apps and looks like them. The project site with the full tour, in English and German,
+is at [nextrmnl.nexapps.dev](https://nextrmnl.nexapps.dev).
 
 ## Screenshots
 

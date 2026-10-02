@@ -26,6 +26,16 @@ refused password means a new question and a new connection; three tries, then ``
 
 Nothing from the operator's machine leaks in: no ``~/.ssh/config``, no default keys, no agent, no GSSAPI.
 
+When the browser goes away
+--------------------------
+A reload, a closed tab or a dropped network is not the end of the shell. Once open, a session whose browser
+leaves without saying ``close`` waits ``detach_minutes`` (operator setting, 0 = end at once) for a browser of the
+same account to come back with ``?attach=<id>``. The shell keeps running meanwhile and its last output is kept in
+memory (``REPLAY_BYTES``) so the returning browser sees the screen again. That buffer lives only in this process:
+never in the database, a log line or a backup, and it is gone with the session. A second browser attaching takes
+the session over; the first one is told and let go. The sign-in check keeps running while nobody watches, so a
+sign-out still ends a detached shell.
+
 Secrets
 -------
 Passwords, passphrases and private keys live in local variables and in the attempt object for the length of one
@@ -42,6 +52,7 @@ import posixpath
 import secrets
 import stat
 import time
+from collections import deque
 from collections.abc import AsyncIterator
 from contextlib import suppress
 from dataclasses import dataclass
@@ -113,6 +124,13 @@ DETAIL_TOO_MANY = "too_many_attempts"
 MAX_SESSIONS_PER_ACCOUNT = 25
 #: How often a live session checks that its browser session still exists.
 AUTH_WATCH_SECONDS = 30
+#: The most recent shell output a returning browser gets replayed. In memory only, per session.
+REPLAY_BYTES = 256 * 1024
+#: Close code for a browser whose session was taken over by another one.
+WS_TAKEN_OVER = 4409
+#: Seconds per minute of ``detach_minutes``; the tests shorten it.
+MINUTE = 60.0
+#: Seconds per minute of `detach_minutes`; the tests shorten it.
 
 
 class SessionEnded(Exception):
@@ -331,6 +349,26 @@ class SshSession:
         self._browser_gone = asyncio.Event()
         self._closed_sent = False
         self.done = asyncio.Event()
+        #: The browser said ``close``: the person ended the session, nothing waits for a return.
+        self._close_requested = False
+        #: Set by ``attach`` when a browser comes back to a detached session.
+        self._returned = asyncio.Event()
+        #: The next resize redraws the screen even at the same size (after a browser came back).
+        self._redraw_pending = False
+        self._output: deque[bytes] = deque()
+        self._output_size = 0
+        #: Every byte the shell ever sent; a returning browser says how many it has, and gets only the rest.
+        self._output_total = 0
+
+    @property
+    def browser_gone(self) -> asyncio.Event:
+        """The event of the browser attached right now; a later one gets its own."""
+        return self._browser_gone
+
+    @property
+    def detached(self) -> bool:
+        """Open, but no browser is watching: waiting for one to come back."""
+        return self.opened_at is not None and self.end == END_RUNNING and self._browser_gone.is_set()
 
     # ------------------------------------------------------------------
     # Talking to the browser
@@ -345,23 +383,16 @@ class SshSession:
         except (WebSocketDisconnect, RuntimeError, OSError):
             self._browser_gone.set()
 
-    async def _send_bytes(self, data: bytes) -> None:
-        if self._ws is None or self._browser_gone.is_set():
-            raise BrowserGone()
-        try:
-            async with self._send_lock:
-                await self._ws.send_bytes(data)
-        except (WebSocketDisconnect, RuntimeError, OSError) as error:
-            self._browser_gone.set()
-            raise BrowserGone() from error
+    async def _read_browser(self, websocket: WebSocket, gone: asyncio.Event) -> None:
+        """Binary frames go to the shell, JSON frames are control messages or answers to our questions.
 
-    async def _read_browser(self) -> None:
-        """Binary frames go to the shell, JSON frames are control messages or answers to our questions."""
-        assert self._ws is not None
+        One reader per attached browser; ``gone`` is that browser's own event, so a reader that ends late cannot
+        mark a newer browser as gone."""
         try:
             while True:
-                message = await self._ws.receive()
-                if message["type"] == "websocket.disconnect":
+                message = await websocket.receive()
+                if message["type"] == "websocket.disconnect" or gone.is_set():
+                    # A browser that was taken over has no say any more, not even a last keystroke.
                     break
                 data = message.get("bytes")
                 if data is not None:
@@ -386,13 +417,18 @@ class SshSession:
                 kind = payload.get("type")
                 if kind == "resize":
                     self._resize(payload)
+                elif kind == "close":
+                    self._close_requested = True
+                    break
                 elif kind in ("hostkey", "password", "passphrase"):
-                    self._answers.put_nowait(payload)
+                    with suppress(asyncio.QueueFull):
+                        self._answers.put_nowait(payload)
         except (WebSocketDisconnect, RuntimeError, OSError):
             pass
         finally:
-            self._browser_gone.set()
-            self._answers.put_nowait(None)
+            gone.set()
+            with suppress(asyncio.QueueFull):
+                self._answers.put_nowait(None)
 
     def _resize(self, payload: dict[str, Any]) -> None:
         try:
@@ -401,9 +437,18 @@ class SshSession:
             return
         if not (1 <= cols <= 1000 and 1 <= rows <= 1000):
             return
+        same = (cols, rows) == (self.cols, self.rows)
         self.cols, self.rows = cols, rows
-        if self.process is not None and not self.process.is_closing():
-            self.process.change_terminal_size(cols, rows)
+        if self.process is None or self.process.is_closing():
+            return
+        if same and not self._redraw_pending:
+            return
+        if same:
+            # A returning browser starts with an empty screen. A full-screen program (vim, htop) only draws
+            # itself again on a size change, so the size changes for a moment.
+            self.process.change_terminal_size(cols, rows + 1 if rows < 1000 else rows - 1)
+        self._redraw_pending = False
+        self.process.change_terminal_size(cols, rows)
 
     async def _ask(self, question: dict[str, Any], expect: str) -> dict[str, Any]:
         """Sends a question and waits for the answer of the expected type. Stale answers are dropped."""
@@ -429,7 +474,7 @@ class SshSession:
         self._loop = asyncio.get_running_loop()
         _sessions[self.id] = self
         self._open_record()
-        reader = asyncio.create_task(self._read_browser())
+        reader = asyncio.create_task(self._read_browser(websocket, self._browser_gone))
         try:
             await self._send({"type": "status", "state": "connecting", "session_id": self.id})
             if brake.wait_seconds(self._brake_key()):
@@ -780,23 +825,31 @@ class SshSession:
         )
 
     async def _serve_shell(self) -> None:
-        """Pumps shell output to the browser until the shell exits, the browser leaves, or the sign-in ends."""
+        """Pumps shell output to the browser until the shell exits, the sign-in ends, or the browser leaves and
+        does not come back in time."""
         assert self.process is not None
         pump = asyncio.create_task(self._pump())
-        gone = asyncio.create_task(self._browser_gone.wait())
         watch = asyncio.create_task(self._watch_auth())
-        done, _pending = await asyncio.wait({pump, gone, watch}, return_when=asyncio.FIRST_COMPLETED)
-        watch.cancel()
-        if pump not in done:
-            pump.cancel()
-            gone.cancel()
-            if watch in done:
-                self._set_end(END_CUT, DETAIL_SIGNED_OUT)
-                await self._send_closed()
-                self._close_connections()
-                return
-            raise BrowserGone()
-        gone.cancel()
+        try:
+            while True:
+                gone = asyncio.create_task(self._browser_gone.wait())
+                done, _pending = await asyncio.wait({pump, gone, watch}, return_when=asyncio.FIRST_COMPLETED)
+                gone.cancel()
+                if pump in done:
+                    break
+                if watch in done:
+                    self._set_end(END_CUT, DETAIL_SIGNED_OUT)
+                    await self._send_closed()
+                    self._close_connections()
+                    return
+                if not await self._wait_for_return(pump, watch):
+                    if pump.done() or watch.done():
+                        continue
+                    raise BrowserGone()
+        finally:
+            watch.cancel()
+            if not pump.done():
+                pump.cancel()
         lost = pump.result()
         try:
             await asyncio.wait_for(self.process.wait_closed(), 5)
@@ -808,6 +861,96 @@ class SshSession:
         else:
             self._set_end(END_NORMAL, DETAIL_EXIT)
         await self._send_closed()
+
+    async def _wait_for_return(self, pump: asyncio.Task[bool], watch: asyncio.Task[None]) -> bool:
+        """The browser left. True if one came back in time; False if the session should end (the person closed
+        it, waiting is off, the time ran out) or ended on its own meanwhile (shell exit, sign-out)."""
+        if not self._browser_gone.is_set():
+            # Taken over: the browser that left was replaced before this loop noticed.
+            return True
+        if self._close_requested:
+            return False
+        with SessionLocal() as db:
+            minutes = int(settings_service.get(db, "detach_minutes") or 0)
+        if minutes <= 0:
+            return False
+        # No await between these two lines and the check: ``attach`` swaps the browser before it sets the event.
+        self._returned.clear()
+        if not self._browser_gone.is_set():
+            return True
+        logger.info(
+            "Session detached account=%s target=%s waiting_minutes=%s", self.account_name, self.target.label, minutes
+        )
+        back = asyncio.create_task(self._returned.wait())
+        done, _pending = await asyncio.wait({pump, watch, back}, timeout=minutes * MINUTE,
+                                            return_when=asyncio.FIRST_COMPLETED)
+        back.cancel()
+        if back in done:
+            return True
+        if not done:
+            logger.info("Detached session expired account=%s target=%s", self.account_name, self.target.label)
+        return False
+
+    def _replay(self, have: int | None) -> tuple[str, int, bytes]:
+        """What a returning browser gets: only what it misses if it says how much it has and that is still in
+        the buffer (``tail``), otherwise the whole buffer for an empty screen (``full``). The offset is where in
+        the shell's output the replay starts; the browser counts on from there."""
+        start = self._output_total - self._output_size
+        if have is not None and start <= have <= self._output_total:
+            return "tail", have, b"".join(self._output)[have - start :]
+        return "full", start, b"".join(self._output)
+
+    async def attach(
+        self, websocket: WebSocket, session_token: str | None, from_ip: str, have: int | None = None
+    ) -> None:
+        """A browser of the session's own account takes the session: after a reload, a dropped network, or
+        from another device. A browser still attached is told and let go. Returns when this browser leaves
+        or the session ends."""
+        if self.opened_at is None or self.end != END_RUNNING or self.process is None:
+            raise SessionNotOpen()
+        gone = asyncio.Event()
+        async with self._send_lock:
+            previous, previous_gone = self._ws, self._browser_gone
+            self._ws, self._browser_gone, self._closed_sent = websocket, gone, False
+            # The session follows the sign-in that holds it now: signing out there ends it.
+            self.session_token = session_token
+            self._redraw_pending = True
+            jump = self.target.jump.name if self.target.jump else None
+            kind, offset, replay = self._replay(have)
+            status = {
+                "type": "status",
+                "state": "open",
+                "session_id": self.id,
+                "via": self.via,
+                "jump": jump,
+                "latency_ms": self.latency_ms,
+                "resumed": True,
+                #: ``full``: the browser clears its screen first; ``tail``: it appends.
+                "replay": kind,
+                "offset": offset,
+            }
+            try:
+                await websocket.send_text(json.dumps(status))
+                if replay:
+                    await websocket.send_bytes(replay)
+            except (WebSocketDisconnect, RuntimeError, OSError):
+                gone.set()
+        if previous is not None and previous is not websocket and not previous_gone.is_set():
+            previous_gone.set()
+            with suppress(Exception):
+                await previous.send_text(json.dumps({"type": "status", "state": "closed", "detail": "taken_over"}))
+            with suppress(Exception):
+                await previous.close(code=WS_TAKEN_OVER)
+        logger.info("Session resumed account=%s target=%s from=%s", self.account_name, self.target.label, from_ip)
+        self._returned.set()
+        reader = asyncio.create_task(self._read_browser(websocket, gone))
+        ended = asyncio.create_task(self.done.wait())
+        left = asyncio.create_task(gone.wait())
+        try:
+            await asyncio.wait({ended, left}, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            for task in (reader, ended, left):
+                task.cancel()
 
     async def _watch_auth(self) -> None:
         """Returns once the browser session behind this terminal is gone: signed out elsewhere, deleted, expired.
@@ -837,7 +980,8 @@ class SshSession:
         )
 
     async def _pump(self) -> bool:
-        """Returns True if the connection was lost rather than closed."""
+        """Returns True if the connection was lost rather than closed. Keeps reading while no browser watches,
+        into the replay buffer only."""
         assert self.process is not None
         stdout = self.process.stdout
         while True:
@@ -847,7 +991,28 @@ class SshSession:
                 return True
             if not data:
                 return False
-            await self._send_bytes(data)
+            # Buffer and send under one lock: a browser attaching meanwhile gets this chunk exactly once, either
+            # in its replay or as the next frame.
+            async with self._send_lock:
+                self._remember_output(data)
+                if self._ws is None or self._browser_gone.is_set():
+                    continue
+                try:
+                    await self._ws.send_bytes(data)
+                except (WebSocketDisconnect, RuntimeError, OSError):
+                    self._browser_gone.set()
+
+    def _remember_output(self, data: bytes) -> None:
+        self._output.append(data)
+        self._output_size += len(data)
+        self._output_total += len(data)
+        while self._output_size > REPLAY_BYTES and len(self._output) > 1:
+            self._output_size -= len(self._output.popleft())
+        if self._output_size > REPLAY_BYTES:
+            # One chunk larger than the buffer: keep its tail.
+            tail = self._output.pop()[-REPLAY_BYTES:]
+            self._output.append(tail)
+            self._output_size = len(tail)
 
     # ------------------------------------------------------------------
     # Ending
@@ -881,6 +1046,9 @@ class SshSession:
             return
         self._set_end(END_FAILED, DETAIL_INTERNAL)
         self._close_connections()
+        # The replay buffer is terminal content; it goes with the session.
+        self._output.clear()
+        self._output_size = 0
         _sessions.pop(self.id, None)
         try:
             self._close_record()

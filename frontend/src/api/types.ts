@@ -130,11 +130,16 @@ export interface VaultPassword {
 export interface RunningSession {
   id: string
   account: string
+  /** The viewer's own session: only these can be taken into a browser. */
+  mine: boolean
+  /** Open, but no browser watches it; it waits for one to come back. */
+  detached: boolean
   connection_id: number | null
   name: string
   target: string
   started_at: string
   from_ip: string
+  state: 'open' | 'connecting'
 }
 
 export type SessionEnd = 'running' | 'normal' | 'failed' | 'hostkey' | 'cut'
@@ -174,6 +179,8 @@ export interface Settings {
   targets_mode: TargetsMode
   targets_list: string[]
   vault_lock_minutes: number
+  /** How long an open shell waits for its browser to come back; 0 ends it with the browser. */
+  detach_minutes: number
   history_days: number
   update_check: boolean
   /** Read-only API keys for dashboards; closed until the operator opens it. */

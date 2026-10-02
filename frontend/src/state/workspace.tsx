@@ -7,14 +7,18 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { ReactNode } from 'react'
 
 import { api } from '../api/client'
-import type { Connection, ReachInfo } from '../api/types'
+import type { Connection, ReachInfo, RunningSession } from '../api/types'
 import { useAuth } from '../auth'
 import { disposeTerminal, peekTerminal, type ConnectStatus, type PromptAnswer, type PromptData, type PromptKind, type Quick, type StatusInfo } from '../lib/terminalCache'
+import { quickFromLabel, shellsToResume, storedTabs, storeTabs } from '../lib/resume'
+import { terminalPrefs } from '../lib/terminalPrefs'
 
 export interface Session {
   id: string
   connectionId: number | null
   quick: Quick | null
+  /** A shell that kept running on the server and is taken back instead of opening a new one. */
+  resumeId: string | null
   name: string
   status: ConnectStatus
   filesOpen: boolean
@@ -38,6 +42,8 @@ interface WorkspaceValue {
   /** `candidate` for a connection that was just saved and is still missing from the state. */
   openConnection: (connectionId: number, candidate?: Connection) => void
   openQuick: (quick: Quick) => void
+  /** Takes a running shell of the own account into this browser (from another device or window). */
+  resume: (running: RunningSession) => void
   closeSession: (id: string) => void
   toggleFiles: (id: string) => void
   /** Called by the terminal cache when the server reports a state. */
@@ -54,6 +60,30 @@ const WorkspaceContext = createContext<WorkspaceValue | null>(null)
 
 let sessionCounter = 0
 const PINNED_KEY = 'nextrmnl.listPinned'
+
+function newSession(connectionId: number | null, quick: Quick | null, name: string, resumeId: string | null = null): Session {
+  sessionCounter += 1
+  return {
+    id: `s${sessionCounter}`,
+    connectionId,
+    quick,
+    resumeId,
+    name,
+    status: 'connecting',
+    filesOpen: false,
+    serverId: resumeId,
+    via: null,
+    jump: null,
+    latencyMs: null,
+    detail: null,
+  }
+}
+
+/** A tab for a shell that is already running on the server. */
+function fromRunning(running: RunningSession): Session {
+  const quick = running.connection_id === null ? quickFromLabel(running.target) : null
+  return newSession(running.connection_id, quick, running.name || running.target, running.id)
+}
 
 /** By default the list floats over the terminal. Whoever pins it keeps that after reloading too. */
 function storedPinned(): boolean {
@@ -120,23 +150,64 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   }, [connections.length])
 
   const startSession = useCallback((connectionId: number | null, quick: Quick | null, name: string) => {
-    sessionCounter += 1
-    const session: Session = {
-      id: `s${sessionCounter}`,
-      connectionId,
-      quick,
-      name,
-      status: 'connecting',
-      filesOpen: false,
-      serverId: null,
-      via: null,
-      jump: null,
-      latencyMs: null,
-      detail: null,
-    }
+    const session = newSession(connectionId, quick, name)
     setSessions((current) => [...current, session])
     setActiveId(session.id)
   }, [])
+
+  // After a reload the shells are still on the server: the tabs come back, in the same order.
+  const restoredFor = useRef<number | null>(null)
+  useEffect(() => {
+    if (!account || restoredFor.current === account.id) return
+    restoredFor.current = account.id
+    void api
+      .get<RunningSession[]>('/api/sessions/running')
+      .then((running) => {
+        const back = shellsToResume(running, storedTabs())
+        if (back.length === 0) return
+        setSessions((current) => {
+          const known = new Set(current.map((s) => s.serverId))
+          return [...current, ...back.filter((r) => !known.has(r.id)).map(fromRunning)]
+        })
+      })
+      .catch(() => undefined)
+  }, [account])
+
+  useEffect(() => {
+    if (activeId === null && sessions.length > 0) setActiveId(sessions[0].id)
+  }, [activeId, sessions])
+
+  // Remember which shells this tab shows, for the next reload.
+  useEffect(() => {
+    storeTabs(sessions.filter((s) => s.serverId && s.status !== 'closed' && s.status !== 'failed').map((s) => s.serverId as string))
+  }, [sessions])
+
+  // Ctrl+W in nano closes the browser tab; with a shell open, the browser asks first.
+  useEffect(() => {
+    if (!sessions.some((s) => s.status === 'open')) return
+    const onLeave = (event: BeforeUnloadEvent) => {
+      if (!terminalPrefs().warnOnClose) return
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', onLeave)
+    return () => window.removeEventListener('beforeunload', onLeave)
+  }, [sessions])
+
+  const resume = useCallback(
+    (running: RunningSession) => {
+      const here = sessions.find((s) => s.serverId === running.id)
+      if (here) {
+        // Shown here but let go (taken over elsewhere): the tab takes it back on Enter; a new tab is not needed.
+        setActiveId(here.id)
+        return
+      }
+      const session = fromRunning(running)
+      setSessions((current) => [...current, session])
+      setActiveId(session.id)
+    },
+    [sessions],
+  )
 
   const openConnection = useCallback(
     (connectionId: number, candidate?: Connection) => {
@@ -240,6 +311,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       activate: setActiveId,
       openConnection,
       openQuick,
+      resume,
       closeSession,
       toggleFiles,
       reportStatus,
@@ -249,7 +321,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       listCollapsed,
       setListCollapsed,
     }),
-    [connections, connectionsError, reloadConnections, reach, sessions, activeId, openConnection, openQuick, closeSession, toggleFiles, reportStatus, showPrompt, prompt, answerPrompt, listCollapsed, setListCollapsed],
+    [connections, connectionsError, reloadConnections, reach, sessions, activeId, openConnection, openQuick, resume, closeSession, toggleFiles, reportStatus, showPrompt, prompt, answerPrompt, listCollapsed, setListCollapsed],
   )
 
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>

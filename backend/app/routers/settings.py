@@ -21,6 +21,7 @@ class SettingsIn(BaseModel):
     targets_mode: str | None = None
     targets_list: list[str] | None = None
     vault_lock_minutes: int | None = Field(default=None, ge=1, le=1440)
+    detach_minutes: int | None = Field(default=None, ge=0, le=120)
     history_days: int | None = Field(default=None, ge=1, le=3650)
     update_check: bool | None = None
     api_keys_allowed: bool | None = None

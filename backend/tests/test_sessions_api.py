@@ -85,10 +85,11 @@ def test_history_shows_every_kind_of_end(client: TestClient, operator: dict, ssh
     with connect_ws(client, host="203.0.113.7", port=22, user=USER) as ws:
         receive_json(ws)
         assert receive_json(ws)["detail"] == "target_not_allowed"
-    # 4. browser leaves while the shell runs
+    # 4. the person closes the tab of a running shell
     with connect_ws(client, cid) as ws:
         assert receive_json(ws)["state"] == "connecting"
         assert receive_json(ws)["state"] == "open"
+        ws.send_json({"type": "close"})
         ws.close(1000)
         wait_for(lambda: client.get("/api/sessions/running").json() == [])
     # 5. operator cuts

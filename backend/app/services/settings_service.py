@@ -22,6 +22,9 @@ DEFAULTS: dict[str, Any] = {
     "targets_list": [],
     #: An open vault locks itself after this many minutes without use.
     "vault_lock_minutes": 30,
+    #: An open shell whose browser left (reload, closed tab, dropped network) waits this long for it to come
+    #: back. 0: the shell ends with the browser, as before.
+    "detach_minutes": 5,
     "history_days": 90,
     #: The only call that leaves the house; off until the operator turns it on.
     "update_check": False,
@@ -52,6 +55,7 @@ PUBLIC_KEYS = (
     "targets_mode",
     "targets_list",
     "vault_lock_minutes",
+    "detach_minutes",
     "history_days",
     "update_check",
     "api_keys_allowed",

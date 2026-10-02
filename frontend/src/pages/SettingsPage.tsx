@@ -13,7 +13,8 @@ import { Badge, Banner, Button, Field, PageHeader, PageLoading, Section, SelectF
 import { writeClipboard } from '../lib/clipboard'
 import { formatDateTime, formatRelative } from '../lib/format'
 import { MIN_PASSWORD } from '../lib/rules'
-import { PREFS_EVENT, setTerminalPref, terminalPrefs, type TerminalPrefs } from '../lib/terminalPrefs'
+import { cleanFontName, PREFS_EVENT, setTerminalPref, terminalPrefs, type TerminalPrefs } from '../lib/terminalPrefs'
+import { FIXED_SCHEMES, isScheme, SCHEME_NAMES, SCHEMES } from '../lib/terminalSchemes'
 import { useLoad } from '../lib/useLoad'
 import { ApiKeysSection } from './settings/ApiKeys'
 import { BackupTab } from './settings/BackupTab'
@@ -27,6 +28,10 @@ const OPERATOR_TABS: readonly Tab[] = ['accounts', 'signin', 'security', 'backup
 function isTab(value: string | null): value is Tab {
   return (TABS as readonly string[]).includes(value ?? '')
 }
+
+/** Common terminal fonts, Nerd Fonts among them. They only apply if installed on the device that shows the terminal. */
+const FONT_PRESETS = ['', 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Hack', 'Source Code Pro', 'MesloLGS NF', 'JetBrainsMono Nerd Font', 'FiraCode Nerd Font', 'Hack Nerd Font']
+const CUSTOM_FONT = '__custom__'
 
 function TerminalSettings() {
   const { t } = useTranslation()
@@ -50,7 +55,12 @@ function TerminalSettings() {
     [t('settings.keysWord'), t('settings.keysWordWhich')],
     [t('settings.keysColumn'), t('settings.keysColumnWhich')],
     [t('settings.keysInterrupt'), t('settings.keysInterruptWhich')],
+    [t('settings.keysSearch'), t('settings.keysSearchWhich')],
   ]
+  const presetFont = FONT_PRESETS.includes(prefs.fontFamily)
+  const [customFont, setCustomFont] = useState(!presetFont)
+  const [fontDraft, setFontDraft] = useState(presetFont ? '' : prefs.fontFamily)
+  const previewBackground = isScheme(prefs.scheme) && prefs.scheme !== 'nex' ? FIXED_SCHEMES[prefs.scheme] : null
 
   return (
     <div className="grid items-start gap-6 lg:grid-cols-[1fr_22rem]">
@@ -80,8 +90,54 @@ function TerminalSettings() {
               <option value="sound">{t('settings.bellSound')}</option>
             </SelectField>
           </div>
+          <div className="grid gap-4 border-t border-ink-700 pt-4 sm:grid-cols-2">
+            <SelectField label={t('settings.scheme')} value={isScheme(prefs.scheme) ? prefs.scheme : 'nex'} onChange={(value) => change('scheme', value)}>
+              {SCHEMES.map((id) => (
+                <option key={id} value={id}>
+                  {id === 'nex' ? t('settings.schemeNex') : SCHEME_NAMES[id]}
+                </option>
+              ))}
+            </SelectField>
+            <SelectField
+              label={t('settings.font')}
+              value={customFont ? CUSTOM_FONT : prefs.fontFamily}
+              onChange={(value) => {
+                if (value === CUSTOM_FONT) {
+                  setCustomFont(true)
+                  return
+                }
+                setCustomFont(false)
+                change('fontFamily', value)
+              }}
+            >
+              <option value="">{t('settings.fontDefault')}</option>
+              {FONT_PRESETS.filter(Boolean).map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+              <option value={CUSTOM_FONT}>{t('settings.fontCustom')}</option>
+            </SelectField>
+            {customFont && (
+              <div className="sm:col-span-2">
+                <Field
+                  label={t('settings.fontName')}
+                  hint={t('settings.fontNameHint')}
+                  value={fontDraft}
+                  onChange={(event) => setFontDraft(event.target.value)}
+                  onBlur={() => change('fontFamily', cleanFontName(fontDraft))}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') change('fontFamily', cleanFontName(fontDraft))
+                  }}
+                  placeholder="FiraCode Nerd Font Mono"
+                />
+              </div>
+            )}
+          </div>
+          <p className="text-xs text-mist-500">{t('settings.fontNote')}</p>
           <div className="flex flex-col gap-4 border-t border-ink-700 pt-4">
             <Switch label={t('settings.blink')} checked={prefs.cursorBlink} onChange={(value) => change('cursorBlink', value)} />
+            <Switch label={t('settings.warnOnClose')} hint={t('settings.warnOnCloseHint')} checked={prefs.warnOnClose} onChange={(value) => change('warnOnClose', value)} />
           </div>
         </Section>
 
@@ -103,7 +159,14 @@ function TerminalSettings() {
 
       <div className="flex flex-col gap-2">
         <p className="text-xs font-semibold tracking-wide text-mist-500 uppercase">{t('settings.preview')}</p>
-        <div className="overflow-hidden rounded-2xl border border-ink-700 bg-term-bg p-4 font-mono leading-snug whitespace-pre text-term-fg" style={{ fontSize: `${prefs.fontSize}px` }}>
+        <div
+          className="overflow-hidden rounded-2xl border border-ink-700 bg-term-bg p-4 font-mono leading-snug whitespace-pre text-term-fg"
+          style={{
+            fontSize: `${prefs.fontSize}px`,
+            ...(prefs.fontFamily ? { fontFamily: `"${cleanFontName(prefs.fontFamily)}", var(--font-mono)` } : {}),
+            ...(previewBackground ? { backgroundColor: previewBackground.background, color: previewBackground.foreground } : {}),
+          }}
+        >
           <p>
             <span className="font-bold text-ok-500">admin@web-01</span>:<span className="font-bold text-accent-400">~</span>$ docker ps
           </p>
@@ -897,7 +960,16 @@ function SecuritySettings() {
             <option value="90">{t('security.days', { count: 90 })}</option>
             <option value="365">{t('security.days', { count: 365 })}</option>
           </SelectField>
+          <SelectField label={t('security.detach')} value={String(data.detach_minutes)} onChange={(value) => void save({ detach_minutes: Number(value) })}>
+            <option value="0">{t('security.detachOff')}</option>
+            {[1, 5, 15, 30, 60, 120].map((minutes) => (
+              <option key={minutes} value={String(minutes)}>
+                {minutes >= 60 ? t('security.hours', { count: minutes / 60 }) : t('security.minutes', { count: minutes })}
+              </option>
+            ))}
+          </SelectField>
         </div>
+        <p className="text-xs text-mist-500">{t('security.detachNote')}</p>
         <p className="text-xs text-mist-500">{t('security.otherNote')}</p>
       </Section>
     </div>

@@ -1,5 +1,7 @@
 import type { ITheme } from '@xterm/xterm'
 
+import { terminalPrefs } from './terminalPrefs'
+import { FIXED_SCHEMES, isScheme } from './terminalSchemes'
 import { storedTheme } from './theme'
 
 function cssColor(name: string, fallback: string): string {
@@ -7,8 +9,21 @@ function cssColor(name: string, fallback: string): string {
   return value || fallback
 }
 
-/** The ANSI colors are matched to the nex gray tones; background and text come from the CSS. */
+/** The colors of the chosen scheme. `nex` follows the app's light or dark mode, the others are fixed. */
 export function terminalTheme(): ITheme {
+  const chosen = terminalPrefs().scheme
+  if (isScheme(chosen) && chosen !== 'nex') return FIXED_SCHEMES[chosen]
+  return nexTheme()
+}
+
+/** The background of the terminal, for the frame around it, which would otherwise show the nex color. */
+export function terminalBackground(): string | null {
+  const chosen = terminalPrefs().scheme
+  return isScheme(chosen) && chosen !== 'nex' ? (FIXED_SCHEMES[chosen].background ?? null) : null
+}
+
+/** The ANSI colors are matched to the nex gray tones; background and text come from the CSS. */
+function nexTheme(): ITheme {
   const light = storedTheme() === 'light'
   const base: ITheme = {
     background: cssColor('--color-term-bg', light ? '#fbfbfd' : '#0d0d13'),

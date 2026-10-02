@@ -10,6 +10,7 @@ or held in memory, so a 4 GB file costs 4 GB of network and nothing else.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import posixpath
 from collections import deque
@@ -70,17 +71,23 @@ async def terminal(
     user: str | None = None,
     cols: int = 80,
     rows: int = 24,
+    attach: str | None = None,
+    have: int | None = None,
 ) -> None:
     """One SSH session: ``connection_id`` for a saved connection, or ``host``, ``port`` and ``user`` for quick connect.
+    ``attach`` takes over a running session of the own account instead (after a reload or from another device).
 
-    Refused handshakes close with 4401 (no cookie or foreign Origin), 4404 (connection not visible) or 4400.
+    Refused handshakes close with 4401 (no cookie or foreign Origin), 4404 (connection or session not visible)
+    or 4400.
     """
     with SessionLocal() as db:
         account = websocket_account(websocket, db)
         if account is None:
             await websocket.close(code=WS_UNAUTHORIZED)
             return
-        if connection_id is not None:
+        if attach is not None:
+            account_id, account_name = account.id, account.name
+        elif connection_id is not None:
             row = ssh._accessible(db, account, connection_id)
             if row is None:
                 await websocket.close(code=WS_NOT_FOUND)
@@ -98,6 +105,9 @@ async def terminal(
             target = quick
         # The ORM row is not used after this point; copy what the session needs before the DB session ends.
         holder = Account(id=account.id, name=account.name, role=account.role)
+    if attach is not None:
+        await _attach(websocket, attach, account_id, account_name, have)
+        return
     if ssh.count_for(holder.id) >= ssh.MAX_SESSIONS_PER_ACCOUNT:
         await websocket.close(code=WS_TOO_MANY)
         return
@@ -106,12 +116,54 @@ async def terminal(
     session = ssh.SshSession(holder, target, client_ip(websocket), *size)
     # The terminal ends with the sign-in behind it: the session watches its own cookie.
     session.session_token = websocket.cookies.get(SESSION_COOKIE)
+    first_browser_gone = session.browser_gone
+    # The session runs in its own task: it may outlive this handler, which ends with its browser.
+    runner = asyncio.create_task(_run(session, websocket, holder.name))
+    _runners.add(runner)
+    runner.add_done_callback(_runners.discard)
+    left = asyncio.create_task(first_browser_gone.wait())
+    ended = asyncio.create_task(session.done.wait())
+    try:
+        await asyncio.wait({left, ended}, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        left.cancel()
+        ended.cancel()
+    # A best-effort close: the browser is usually gone already, and Starlette raises for that.
+    with suppress(Exception):
+        await websocket.close()
+
+
+#: Sessions running beyond their first handler; held here so the event loop does not drop them.
+_runners: set[asyncio.Task[None]] = set()
+
+
+async def _run(session: ssh.SshSession, websocket: WebSocket, account_name: str) -> None:
     try:
         await session.run(websocket)
+    except asyncio.CancelledError:
+        raise
     except Exception:
         # run() handles its own failures; this is the last net so nothing reaches the middleware's error log.
-        logger.exception("Session handler failed account=%s", holder.name)
-    # A best-effort close: the browser is usually gone already, and Starlette raises for that.
+        logger.exception("Session handler failed account=%s", account_name)
+
+
+async def _attach(
+    websocket: WebSocket, session_id: str, account_id: int, account_name: str, have: int | None
+) -> None:
+    """Only the account that opened a session may take it back; for the operator too, a foreign shell is not
+    theirs to type into."""
+    session = ssh.get(session_id)
+    if session is None or session.account_id != account_id or session.opened_at is None:
+        await websocket.close(code=WS_NOT_FOUND)
+        return
+    await websocket.accept()
+    try:
+        await session.attach(websocket, websocket.cookies.get(SESSION_COOKIE), client_ip(websocket), have)
+    except ssh.SessionNotOpen:
+        with suppress(Exception):
+            await websocket.send_json({"type": "status", "state": "failed", "detail": "session_gone", "end": "failed"})
+    except Exception:
+        logger.exception("Attach failed account=%s", account_name)
     with suppress(Exception):
         await websocket.close()
 
@@ -125,10 +177,14 @@ def _names(db: DbSession) -> dict[int, str]:
     return {row.id: row.name for row in db.scalars(select(Account))}
 
 
-def _running_view(session: ssh.SshSession) -> dict[str, Any]:
+def _running_view(session: ssh.SshSession, viewer: Account) -> dict[str, Any]:
     return {
         "id": session.id,
         "account": session.account_name,
+        #: The viewer's own session: only these can be taken back into a browser.
+        "mine": session.account_id == viewer.id,
+        #: Open, but no browser watches it; it waits for one to come back.
+        "detached": session.detached,
         "connection_id": session.target.connection_id,
         "name": session.target.name,
         "target": session.target.label,
@@ -140,7 +196,7 @@ def _running_view(session: ssh.SshSession) -> dict[str, Any]:
 
 @router.get("/running", summary="Live sessions: all for the operator, own ones for a member")
 def running(account: CurrentAccount) -> list[dict[str, Any]]:
-    return [_running_view(session) for session in ssh.running(account)]
+    return [_running_view(session, account) for session in ssh.running(account)]
 
 
 @router.post("/{session_id}/disconnect", status_code=204, summary="End a live session")

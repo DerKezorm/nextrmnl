@@ -25,6 +25,14 @@ is at [nextrmnl.nexapps.dev](https://nextrmnl.nexapps.dev).
 
 - **Terminal in the browser** (xterm.js) over a WebSocket to the nextrmnl server, which speaks SSH to your
   machines. Full-screen, tabs for open sessions, jump hosts, a command to run after sign-in, keepalives.
+- **Sessions that survive the browser**: a reload, a closed tab or a dropped network does not end the shell. It
+  keeps running for a few minutes (5 by default, set by the operator, 0 turns it off) and comes back with its last
+  screen; after a short drop only what was missed is sent again. Another device of the same account can take it
+  over. Closing the tab on purpose ends it at once, and the browser asks before leaving a page with an open shell,
+  so Ctrl+W in nano does not cost the session.
+- **Search in the terminal** with Ctrl+Shift+F, all matches marked. **Color schemes** (Dracula, Nord, Solarized,
+  Gruvbox, One Dark, Tokyo Night, or the nex colors that follow light and dark) and **any installed font**, Nerd
+  Fonts included; changes apply to open terminals right away.
 - **SFTP next to the terminal**: browse, upload with drag and drop, download, rename, delete, all through the
   same SSH connection.
 - **Copy and paste like PuTTY**: selecting copies, Ctrl+Shift+C, Ctrl+Insert, Ctrl+C with a selection; paste with
@@ -115,6 +123,9 @@ open with the account's password only. Both go into the backup archive.
 - Every changing request needs the header `X-Requested-By: nextrmnl`; WebSockets must come from the same origin.
 - Every password check while signed in (opening the vault, exporting it, changing the password, the second
   factor) counts like a sign-in: wrong answers lock the account. Terminals end with the sign-in they came with.
+- A shell waiting for its browser can only be taken back by the account that opened it, not even by the operator.
+  Its last screen (at most 256 KB) stays in the server's memory only, never on disk, in the log or in a backup, and
+  is gone with the session. Signing out ends waiting shells too.
 - A member of a shared connection signs in with their own user, key or password, and only their own start
   command runs in their shell; a stored password stays with the host, port and user it was given for.
 - Responses carry a Content Security Policy, `X-Frame-Options: DENY` and friends.

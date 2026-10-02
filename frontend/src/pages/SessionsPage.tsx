@@ -39,7 +39,7 @@ export function SessionsPage() {
   const notify = useNotice()
   const navigate = useNavigate()
   const { account } = useAuth()
-  const { sessions, activate, closeSession } = useWorkspace()
+  const { sessions, activate, closeSession, resume } = useWorkspace()
   const [filter, setFilter] = useState<string>('all')
   const running = useLoad(() => api.get<RunningSession[]>('/api/sessions/running'))
   const history = useLoad(() => api.get<SessionRecord[]>('/api/sessions/history?limit=300'))
@@ -81,8 +81,11 @@ export function SessionsPage() {
               <li key={record.id} className="flex flex-wrap items-center gap-3 py-3">
                 <Avatar name={record.account} />
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium text-mist-100">
-                    {record.account} <span className="text-mist-500">→</span> {record.name || record.target}
+                  <p className="flex flex-wrap items-center gap-2 text-sm font-medium text-mist-100">
+                    <span>
+                      {record.account} <span className="text-mist-500">→</span> {record.name || record.target}
+                    </span>
+                    {record.detached && <Badge tone="warn">{t('sessions.waiting')}</Badge>}
                   </p>
                   <p className="font-mono text-xs text-mist-500">
                     {record.target} · {t('sessions.since', { when: formatDateTime(record.started_at), duration: elapsedSince(record.started_at) })} ·{' '}
@@ -100,6 +103,20 @@ export function SessionsPage() {
                   >
                     <Symbol name="terminal" className="h-3.5 w-3.5" />
                     {t('sessions.show')}
+                  </Button>
+                )}
+                {!own && record.mine && record.state === 'open' && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    title={t('sessions.takeHereHint')}
+                    onClick={() => {
+                      resume(record)
+                      navigate('/')
+                    }}
+                  >
+                    <Symbol name="terminal" className="h-3.5 w-3.5" />
+                    {t('sessions.takeHere')}
                   </Button>
                 )}
                 {(own || account?.role === 'operator') && (

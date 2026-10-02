@@ -69,6 +69,9 @@ def start_session(db: Session, account: Account, ip: str, user_agent: str) -> st
     )
     account.last_seen_at = utcnow()
     db.commit()
+    from .services import notify
+
+    notify.emit(notify.SIGNIN, "Sign-in", f"{account.name} signed in from {ip[:64] or 'an unknown address'}.")
     return token
 
 

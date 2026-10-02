@@ -309,7 +309,14 @@
       "second_factor_unavailable": "The second factor cannot be read right now because the server key does not match. The log has details.",
       "session_not_open": "The session is not connected yet.",
       "too_large": "The file is larger than 4 GB.",
-      "url_invalid": "The authentik address must start with http:// or https://."
+      "url_invalid": "The authentik address must start with http:// or https://.",
+      "invalid_notify_kind": "Choose nexsift or Gotify, ntfy or a webhook.",
+      "notify_url_invalid": "The address needs http:// or https:// and a host, without a user name.",
+      "notify_url_missing": "Enter and save the address of the inbox first.",
+      "invalid_notify_events": "Unknown group.",
+      "notify_off": "Notifications are off or not set up yet.",
+      "notify_refused": "The inbox refused the message. Check address and token.",
+      "notify_unreachable": "The inbox does not answer."
     },
     "generic": "Something went wrong.",
     "http": "The server answered with an error (HTTP {{status}}).",
@@ -999,5 +1006,45 @@
     "accountSet": "End for {{name}} saved.",
     "accountCleared": "{{name}} has no end any more.",
     "shareEnds": "Shared until {{when}}"
+  },
+  "notifications": {
+    "title": "Notifications",
+    "lead": "nextrmnl reports events to nexsift, Gotify, ntfy or a webhook. Another way out of the house, so it is off by default.",
+    "kind": "Inbox",
+    "kindGotify": "nexsift or Gotify",
+    "kindNtfy": "ntfy",
+    "kindWebhook": "Webhook (JSON)",
+    "url": "Address",
+    "urlHint": {
+      "gotify": "The address of the Gotify door, port 8491 with nexsift. nextrmnl adds /message itself.",
+      "ntfy": "The full address with the topic, for example https://ntfy.example.com/homelab.",
+      "webhook": "The full address; nextrmnl sends JSON with group, title and text."
+    },
+    "token": "Token",
+    "tokenHint": {
+      "gotify": "The token of the application or source. Sent as a header, never in the address.",
+      "ntfy": "Only needed when the topic is protected. Sent as a Bearer header.",
+      "webhook": "Optional. Sent as a Bearer header."
+    },
+    "tokenSet": "A token is stored. A new one replaces it; it is never shown again.",
+    "removeToken": "Remove token",
+    "test": "Send a test message",
+    "testSent": "The test message arrived.",
+    "enabled": "Send notifications",
+    "enabledHint": "Only with this on does a message leave nextrmnl.",
+    "events": "About what",
+    "category": {
+      "security": "Security",
+      "signin": "Sign-ins",
+      "sessions": "Sessions",
+      "operations": "Operations"
+    },
+    "categoryHint": {
+      "security": "An account locked, a changed host key, a second factor reset, a new API key. Urgent.",
+      "signin": "Every sign-in to nextrmnl, with account and address.",
+      "sessions": "Every opened session: who, where to. Loud when there is a lot going on.",
+      "operations": "A failed backup, a new version."
+    },
+    "never": "A message names account, target and event. Never terminal content, passwords, keys, tokens or file names."
   }
 }

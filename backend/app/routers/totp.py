@@ -25,7 +25,7 @@ from ..deps import (
 from ..meldungen import fehler, meldung
 from ..models import SIGN_IN_PASSWORD, Account
 from ..security import brake, end_all_sessions
-from ..services import accounts, settings_service, totp, vault
+from ..services import accounts, notify, settings_service, totp, vault
 from .auth import PENDING_COOKIE, account_view, end_ssh_sessions, sign_in_response
 
 logger = logging.getLogger("nextrmnl.auth")
@@ -142,6 +142,7 @@ def operator_reset(account_id: int, operator: OperatorAccount, db: DbSession) ->
     vault.lock(row.id)
     end_ssh_sessions(row.id, "signed_out")
     logger.warning("Second factor reset by operator account=%s by=%s, all sessions ended", row.name, operator.name)
+    notify.emit(notify.SECURITY, "Second factor reset", f"{operator.name} removed the second factor of {row.name}.")
     return account_view(db, row)
 
 

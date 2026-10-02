@@ -189,6 +189,13 @@ export interface Settings {
   vault_lock_minutes: number
   /** How long an open shell waits for its browser to come back; 0 ends it with the browser. */
   detach_minutes: number
+  /** Notifications to nexsift, Gotify, ntfy or a webhook; a way out, closed by default. */
+  notify_enabled: boolean
+  notify_kind: NotifyKind
+  notify_url: string
+  /** Whether a token is stored; the token itself never comes back. */
+  notify_token_set: boolean
+  notify_events: NotifyCategory[]
   history_days: number
   update_check: boolean
   /** Read-only API keys for dashboards; closed until the operator opens it. */
@@ -335,3 +342,6 @@ export interface Snippet {
   created_at: string
   last_used_at: string | null
 }
+
+export type NotifyKind = 'gotify' | 'ntfy' | 'webhook'
+export type NotifyCategory = 'security' | 'signin' | 'sessions' | 'operations'

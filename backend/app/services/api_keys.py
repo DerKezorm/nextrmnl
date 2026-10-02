@@ -66,6 +66,9 @@ def create(db: Session, operator: Account, name: str) -> tuple[ApiKey, str]:
     db.commit()
     db.refresh(row)
     logger.info("API key created name=%s by=%s", name, operator.name)
+    from . import notify
+
+    notify.emit(notify.SECURITY, "New API key", f"{operator.name} created the read-only API key {name!r}.")
     return row, plaintext
 
 

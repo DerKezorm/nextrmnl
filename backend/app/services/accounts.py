@@ -95,6 +95,13 @@ def note_failure(db: Session, account: Account) -> None:
         account.locked_until = utcnow() + timedelta(minutes=LOCK_MINUTES)
         account.failed_logins = 0
         logger.warning("Account locked after %s failures name=%s minutes=%s", MAX_FAILURES, account.name, LOCK_MINUTES)
+        from . import notify
+
+        notify.emit(
+            notify.SECURITY,
+            "Account locked",
+            f"{account.name} is locked for {LOCK_MINUTES} minutes after {MAX_FAILURES} failed checks in a row.",
+        )
     else:
         logger.warning(
             "Check failed name=%s (%s of %s before lockout)", account.name, account.failed_logins, MAX_FAILURES

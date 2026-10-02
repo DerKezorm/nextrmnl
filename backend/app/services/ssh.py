@@ -85,7 +85,7 @@ from ..models import (
     utcnow,
 )
 from ..security import brake, session_account
-from . import hostkeys, settings_service, targets, vault
+from . import hostkeys, notify, settings_service, targets, vault
 
 logger = logging.getLogger("nextrmnl.ssh")
 sftp_logger = logging.getLogger("nextrmnl.sftp")
@@ -706,6 +706,12 @@ class SshSession:
                 key.get_fingerprint(),
                 self.account_name,
             )
+            notify.emit(
+                notify.SECURITY,
+                "Changed host key",
+                f"{target.host}:{target.port} offered {self.account_name} a different host key: "
+                f"{key.get_fingerprint()} instead of {old['old_fingerprint']}.",
+            )
             if self.account_role != OPERATOR:
                 # The store is shared by every account. A member replacing a changed key would make the
                 # impostor's key the known one for everybody else, without anybody else ever seeing a warning.
@@ -822,6 +828,11 @@ class SshSession:
 
             touch(db, self.target.connection_id)
         jump = self.target.jump.name if self.target.jump else None
+        notify.emit(
+            notify.SESSIONS,
+            "Session opened",
+            f"{self.account_name} opened {self.target.label}" + (f" through {jump}" if jump else "") + ".",
+        )
         logger.info(
             "Session opened account=%s target=%s via=%s jump=%s from=%s",
             self.account_name,

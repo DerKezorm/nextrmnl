@@ -20,6 +20,7 @@ import { useLoad } from '../lib/useLoad'
 import { ApiKeysSection } from './settings/ApiKeys'
 import { BackupTab } from './settings/BackupTab'
 import { LogTab } from './settings/LogTab'
+import { NotificationsSection } from './settings/Notifications'
 import { SecondFactorSection } from './settings/SecondFactor'
 
 const TABS = ['terminal', 'account', 'accounts', 'signin', 'security', 'backup', 'logs'] as const
@@ -951,7 +952,7 @@ function SecuritySettings() {
   const settings = useLoad(() => api.get<Settings>('/api/settings'))
   const [error, setError] = useState<string | null>(null)
 
-  async function save(values: Partial<Settings>) {
+  async function save(values: Partial<Settings> & { notify_token?: string }) {
     setError(null)
     try {
       settings.set(await api.put<Settings>('/api/settings', values))
@@ -1016,6 +1017,9 @@ function SecuritySettings() {
 
       {/* The third way out: what a dashboard may read. */}
       <ApiKeysSection allowed={data.api_keys_allowed} onToggle={(value) => void save({ api_keys_allowed: value })} />
+
+      {/* The fourth way out: messages to the operator's inbox. */}
+      <NotificationsSection data={data} onSave={save} />
 
       <Section title={t('security.otherTitle')}>
         <div className="grid gap-4 sm:grid-cols-2">

@@ -30,6 +30,13 @@ DEFAULTS: dict[str, Any] = {
     "update_check": False,
     #: Read-only API keys for dashboards: another way out, closed until the operator opens it.
     "api_keys_allowed": False,
+    #: Notifications to nexsift, Gotify, ntfy or a webhook: a way out too, closed until the operator opens it.
+    "notify_enabled": False,
+    "notify_kind": "gotify",
+    "notify_url": "",
+    #: The inbox's token, encrypted with the server secret; never sent back to the browser.
+    "notify_token_enc": "",
+    "notify_events": ["security", "signin", "sessions", "operations"],
     "backup_schedule": "weekly",
     "backup_keep": 5,
     "password_login": True,
@@ -59,6 +66,10 @@ PUBLIC_KEYS = (
     "history_days",
     "update_check",
     "api_keys_allowed",
+    "notify_enabled",
+    "notify_kind",
+    "notify_url",
+    "notify_events",
     "backup_schedule",
     "backup_keep",
     "password_login",
@@ -81,7 +92,10 @@ def get_all(db: Session) -> dict[str, Any]:
 
 def public(db: Session) -> dict[str, Any]:
     values = get_all(db)
-    return {key: values[key] for key in PUBLIC_KEYS}
+    shown = {key: values[key] for key in PUBLIC_KEYS}
+    # Whether a token is stored, not the token.
+    shown["notify_token_set"] = bool(values.get("notify_token_enc"))
+    return shown
 
 
 def save(db: Session, values: dict[str, Any]) -> None:

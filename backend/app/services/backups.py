@@ -455,6 +455,11 @@ async def run_forever(stop: asyncio.Event) -> None:
             await asyncio.to_thread(run_job)
         except Exception:
             logger.exception("Backup job failed")
+            from . import notify
+
+            notify.emit(
+                notify.OPERATIONS, "Backup failed", "The scheduled backup could not be made. The log names the reason."
+            )
 
 
 # --- The archive ----------------------------------------------------------------------------------------------- #

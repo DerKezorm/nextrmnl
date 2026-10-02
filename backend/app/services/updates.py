@@ -76,6 +76,11 @@ async def status(*, enabled: bool, force: bool = False) -> UpdateStatus:
         except (httpx.HTTPError, ValueError) as error:
             logger.warning("Update check failed: %s", error)
             return _cached or UpdateStatus(current=__version__)
+        before = _cached.latest if _cached is not None else None
+        if latest and latest != before and is_newer(latest, __version__):
+            from . import notify
+
+            notify.emit(notify.OPERATIONS, "New version", f"nextrmnl {latest} is out; this one runs {__version__}.")
         _cached = UpdateStatus(
             current=__version__,
             latest=latest,

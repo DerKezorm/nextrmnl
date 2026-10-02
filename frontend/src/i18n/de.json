@@ -309,7 +309,14 @@
       "second_factor_unavailable": "Der zweite Faktor ist gerade nicht lesbar, weil der Serverschlüssel nicht passt. Das Protokoll nennt Einzelheiten.",
       "session_not_open": "Die Sitzung ist noch nicht verbunden.",
       "too_large": "Die Datei ist größer als 4 GB.",
-      "url_invalid": "Die authentik-Adresse muss mit http:// oder https:// beginnen."
+      "url_invalid": "Die authentik-Adresse muss mit http:// oder https:// beginnen.",
+      "invalid_notify_kind": "Wähle nexsift oder Gotify, ntfy oder Webhook.",
+      "notify_url_invalid": "Die Adresse braucht http:// oder https:// und einen Rechner, ohne Benutzernamen.",
+      "notify_url_missing": "Erst die Adresse des Empfängers eintragen und speichern.",
+      "invalid_notify_events": "Unbekannte Gruppe.",
+      "notify_off": "Benachrichtigungen sind aus oder noch nicht eingerichtet.",
+      "notify_refused": "Der Empfänger hat die Nachricht abgelehnt. Adresse und Token prüfen.",
+      "notify_unreachable": "Der Empfänger antwortet nicht."
     },
     "generic": "Da ist etwas schiefgegangen.",
     "http": "Der Server hat mit einem Fehler geantwortet (HTTP {{status}}).",
@@ -999,5 +1006,45 @@
     "accountSet": "Ablauf für {{name}} gespeichert.",
     "accountCleared": "{{name}} hat jetzt kein Ende mehr.",
     "shareEnds": "Freigabe bis {{when}}"
+  },
+  "notifications": {
+    "title": "Benachrichtigungen",
+    "lead": "nextrmnl meldet Ereignisse an nexsift, Gotify, ntfy oder einen Webhook. Ein weiterer Weg nach draußen, darum ab Werk aus.",
+    "kind": "Empfänger",
+    "kindGotify": "nexsift oder Gotify",
+    "kindNtfy": "ntfy",
+    "kindWebhook": "Webhook (JSON)",
+    "url": "Adresse",
+    "urlHint": {
+      "gotify": "Die Adresse des Gotify-Eingangs, bei nexsift mit Port 8491. nextrmnl hängt /message selbst an.",
+      "ntfy": "Die volle Adresse samt Thema, etwa https://ntfy.example.com/homelab.",
+      "webhook": "Die volle Adresse; nextrmnl schickt JSON mit Gruppe, Titel und Text."
+    },
+    "token": "Token",
+    "tokenHint": {
+      "gotify": "Das Token der Anwendung oder Quelle. Geht als Kopfzeile mit, nie in der Adresse.",
+      "ntfy": "Nur nötig, wenn das Thema geschützt ist. Geht als Bearer-Kopfzeile mit.",
+      "webhook": "Freiwillig. Geht als Bearer-Kopfzeile mit."
+    },
+    "tokenSet": "Ein Token ist gespeichert. Ein neues ersetzt es; zurückgezeigt wird es nie.",
+    "removeToken": "Token entfernen",
+    "test": "Testnachricht senden",
+    "testSent": "Testnachricht ist angekommen.",
+    "enabled": "Benachrichtigungen senden",
+    "enabledHint": "Erst wenn das an ist, verlässt eine Nachricht nextrmnl.",
+    "events": "Worüber",
+    "category": {
+      "security": "Sicherheit",
+      "signin": "Anmeldungen",
+      "sessions": "Sitzungen",
+      "operations": "Betrieb"
+    },
+    "categoryHint": {
+      "security": "Konto gesperrt, geänderter Hostschlüssel, zweiter Faktor zurückgesetzt, neuer API-Schlüssel. Dringend.",
+      "signin": "Jede Anmeldung an nextrmnl, mit Konto und Adresse.",
+      "sessions": "Jede geöffnete Sitzung: wer, wohin. Bei viel Betrieb laut.",
+      "operations": "Gescheiterte Sicherung, neue Version."
+    },
+    "never": "Eine Nachricht nennt Konto, Ziel und Ereignis. Nie Terminal-Inhalt, Passwörter, Schlüssel, Tokens oder Dateinamen."
   }
 }

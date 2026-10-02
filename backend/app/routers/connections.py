@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter
@@ -13,7 +14,7 @@ from sqlalchemy import select
 
 from ..deps import CurrentAccount, DbSession
 from ..meldungen import fehler
-from ..models import AUTH_METHODS, Account, Connection, ConnectionShare, HostKey, VaultKey, utcnow
+from ..models import AUTH_METHODS, Account, Connection, ConnectionShare, HostKey, VaultKey, active_share, utcnow
 from ..services import settings_service, targets
 
 logger = logging.getLogger("nextrmnl.connections")
@@ -34,12 +35,23 @@ class ConnectionIn(BaseModel):
     start_command: str = Field(default="", max_length=255)
 
 
+class ShareEntry(BaseModel):
+    account_id: int
+    #: The share ends here; empty for no end.
+    expires_at: datetime | None = None
+
+
 class ShareIn(BaseModel):
-    account_ids: list[int]
+    #: Who sees the connection, with an end per account. ``account_ids`` is the older form without ends.
+    shares: list[ShareEntry] | None = None
+    account_ids: list[int] = Field(default_factory=list)
 
 
 def visible(db: DbSession, account: Account) -> list[Connection]:
-    shared_ids = select(ConnectionShare.connection_id).where(ConnectionShare.account_id == account.id)
+    shared_ids = select(ConnectionShare.connection_id).where(
+        ConnectionShare.account_id == account.id,
+        (ConnectionShare.expires_at.is_(None)) | (ConnectionShare.expires_at > utcnow()),
+    )
     return list(
         db.scalars(
             select(Connection)
@@ -62,8 +74,7 @@ def accessible(db: DbSession, account: Account, connection_id: int) -> Connectio
         raise fehler("not_found", "Connection not found.", 404)
     if row.owner_id == account.id:
         return row
-    share = db.get(ConnectionShare, {"connection_id": connection_id, "account_id": account.id})
-    if share is None:
+    if active_share(db, connection_id, account.id) is None:
         raise fehler("not_found", "Connection not found.", 404)
     return row
 
@@ -71,15 +82,18 @@ def accessible(db: DbSession, account: Account, connection_id: int) -> Connectio
 def view(
     db: DbSession, account: Account, row: Connection, names: dict[int, str], host_keys: dict[tuple[str, int], HostKey]
 ) -> dict[str, Any]:
-    shared_with = [
-        int(account_id)
-        for account_id in db.scalars(select(ConnectionShare.account_id).where(ConnectionShare.connection_id == row.id))
-    ]
+    shares = list(db.scalars(select(ConnectionShare).where(ConnectionShare.connection_id == row.id)))
+    shared_with = [int(share.account_id) for share in shares]
+    share_ends = {
+        str(share.account_id): share.expires_at.isoformat() if share.expires_at else None for share in shares
+    }
+    own_share = None
     host_key = host_keys.get((row.host.lower(), row.port))
     # A member sees the connection with their own sign-in: their user name, method and key.
     user, auth, key_id = row.user, row.auth, row.key_id
     if row.owner_id != account.id:
         share = db.get(ConnectionShare, {"connection_id": row.id, "account_id": account.id})
+        own_share = share
         user = share.user if share is not None and share.user else row.user
         auth = share.auth if share is not None else "ask"
         key_id = share.key_id if share is not None and auth == "key" else None
@@ -99,6 +113,10 @@ def view(
         "owner_id": row.owner_id,
         "shared_by": names.get(row.owner_id) if row.owner_id != account.id else None,
         "shared_with": shared_with if row.owner_id == account.id else [],
+        #: For the owner: when each share ends (null: no end). Run-out shares stay listed until changed.
+        "share_ends": share_ends if row.owner_id == account.id else {},
+        #: For a member: when their own share ends.
+        "share_expires_at": own_share.expires_at.isoformat() if own_share and own_share.expires_at else None,
         "host_key": {"state": "known", "fingerprint": host_key.fingerprint, "key_type": host_key.key_type}
         if host_key
         else {"state": "new", "fingerprint": "", "key_type": ""},
@@ -190,10 +208,14 @@ def delete(connection_id: int, account: CurrentAccount, db: DbSession) -> None:
 @router.put("/{connection_id}/share", summary="Which accounts see this connection")
 def share(connection_id: int, payload: ShareIn, account: CurrentAccount, db: DbSession) -> dict[str, Any]:
     row = own(db, account, connection_id)
-    wanted = {account_id for account_id in payload.account_ids if account_id != account.id}
+    entries = payload.shares if payload.shares is not None else [ShareEntry(account_id=a) for a in payload.account_ids]
+    ends = {entry.account_id: entry.expires_at for entry in entries if entry.account_id != account.id}
+    wanted = set(ends)
     existing = {int(a) for a in db.scalars(select(Account.id))}
     if not wanted <= existing:
         raise fehler("unknown_account", "One of the accounts does not exist.", 422)
+    if any(end is not None and end.tzinfo is None for end in ends.values()):
+        raise fehler("invalid_input", "Give the end with a time zone.", 422)
     # Only the difference changes: a member's own sign-in on a share they keep must survive a re-share.
     current = {
         int(a) for a in db.scalars(select(ConnectionShare.account_id).where(ConnectionShare.connection_id == row.id))
@@ -205,7 +227,10 @@ def share(connection_id: int, payload: ShareIn, account: CurrentAccount, db: DbS
             )
         )
     for account_id in sorted(wanted - current):
-        db.add(ConnectionShare(connection_id=row.id, account_id=account_id))
+        db.add(ConnectionShare(connection_id=row.id, account_id=account_id, expires_at=ends[account_id]))
+    for share in db.scalars(select(ConnectionShare).where(ConnectionShare.connection_id == row.id)):
+        if share.account_id in ends:
+            share.expires_at = ends[share.account_id]
     db.commit()
     names = _names(db)
     logger.info("Connection %r shared with accounts: %s", row.name, ", ".join(names[a] for a in sorted(wanted)) or "-")
@@ -225,7 +250,7 @@ class AccessIn(BaseModel):
 @router.put("/{connection_id}/my-access", summary="Own user name, method and key on a connection shared with me")
 def set_my_access(connection_id: int, payload: AccessIn, account: CurrentAccount, db: DbSession) -> dict[str, Any]:
     row = db.get(Connection, connection_id)
-    share = db.get(ConnectionShare, {"connection_id": connection_id, "account_id": account.id})
+    share = active_share(db, connection_id, account.id)
     if row is None or share is None:
         raise fehler("not_found", "Connection not found.", 404)
     if payload.auth not in AUTH_METHODS:

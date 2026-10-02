@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import re
 import secrets
-from datetime import timedelta
+from datetime import datetime, timedelta
 from functools import lru_cache
 
 from sqlalchemy import func, select
@@ -126,6 +126,10 @@ def authenticate(db: Session, name: str, password: str) -> Account:
     if not verify_password(password, account.password_hash):
         note_failure(db, account)
         raise AccountError("wrong_credentials", "Name or password is wrong.", 401)
+    if account.expired:
+        # Only after the password: the answer must not tell a stranger that the name exists.
+        logger.warning("Sign-in refused, account expired name=%s", account.name)
+        raise AccountError("account_expired", "This account has expired. Ask the operator to extend it.", 403)
     return account
 
 
@@ -150,9 +154,15 @@ def change_password(db: Session, account: Account, current: str, new: str) -> No
 # ---------------------------------------------------------------------------
 
 
-def create_invite(db: Session, by: Account, name: str, role: str) -> tuple[Invite, str]:
+def create_invite(
+    db: Session, by: Account, name: str, role: str, account_expires_at: datetime | None = None
+) -> tuple[Invite, str]:
     if role not in ROLES:
         raise AccountError("invalid_role", "Unknown role.", 422)
+    if account_expires_at is not None and role == OPERATOR:
+        raise AccountError("operator_cannot_expire", "An operator account does not expire.", 422)
+    if account_expires_at is not None and account_expires_at <= utcnow():
+        raise AccountError("expiry_in_past", "The end must lie in the future.", 422)
     token = secrets.token_urlsafe(24)
     invite = Invite(
         token_hash=hash_token(token),
@@ -160,6 +170,7 @@ def create_invite(db: Session, by: Account, name: str, role: str) -> tuple[Invit
         role=role,
         created_by=by.id,
         expires_at=utcnow() + timedelta(days=INVITE_DAYS),
+        account_expires_at=account_expires_at,
     )
     db.add(invite)
     db.commit()
@@ -179,6 +190,7 @@ def accept_invite(db: Session, token: str, name: str, password: str) -> Account:
     if invite is None:
         raise AccountError("invite_invalid", "This invitation is not valid any more.", 404)
     account = create_with_password(db, name, password, invite.role)
+    account.expires_at = invite.account_expires_at
     db.delete(invite)
     db.commit()
     logger.info("Invite accepted name=%s", account.name)

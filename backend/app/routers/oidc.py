@@ -268,6 +268,8 @@ async def callback(
     account = _resolve(db, identity, bool(settings_service.get(db, "oidc_auto_create")))
     if isinstance(account, str):
         return refuse(account, f"no account for this identity: {account} address={oidc.masked(identity.email)}")
+    if account.expired:
+        return refuse("account_expired", f"account expired name={account.name}")
 
     # A password account that arrives through the provider is not asked for nextrmnl's own second factor: on
     # this path the provider is in charge of that, as the account page says. The required mode still binds it

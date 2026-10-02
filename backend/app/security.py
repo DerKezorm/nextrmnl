@@ -86,6 +86,12 @@ def session_account(db: Session, token: str | None) -> Account | None:
     account = db.get(Account, session.account_id)
     if account is None:
         return None
+    if account.expired:
+        # A guest account ran out: every browser of it is signed out, and its terminals notice within half a
+        # minute (``ssh._watch_auth``).
+        db.delete(session)
+        db.commit()
+        return None
     # Only every few minutes: the frontend asks often.
     if (now - session.last_seen_at).total_seconds() > 300:
         session.last_seen_at = now

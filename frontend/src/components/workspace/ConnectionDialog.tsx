@@ -4,12 +4,13 @@ import { useTranslation } from 'react-i18next'
 import { api, errorMessage } from '../../api/client'
 import type { AccountName, AuthMethod, Connection, ConnectionIn, VaultKey } from '../../api/types'
 import { useAuth } from '../../auth'
+import { endOfDay, isPast, toDateInput } from '../../lib/dates'
 import { useLoad } from '../../lib/useLoad'
 import { useWorkspace } from '../../state/workspace'
 import { Dialog } from '../Dialog'
 import { Symbol } from '../Symbol'
 import { TabRow } from '../TabRow'
-import { Banner, Button, Field, SelectField, Switch } from '../ui'
+import { Badge, Banner, Button, Field, SelectField, Switch } from '../ui'
 
 type Tab = 'basics' | 'auth' | 'advanced' | 'share'
 
@@ -29,6 +30,9 @@ export function ConnectionDialog({ connection, onClose, startTab = 'basics' }: {
   const ownGroups = [...new Set(connections.filter((c) => !c.shared_by && c.group).map((c) => c.group))]
   const [draft, setDraft] = useState<ConnectionIn>(() => draftOf(connection, ownGroups[0] ?? ''))
   const [shareIds, setShareIds] = useState<number[]>(connection?.shared_with ?? [])
+  // The end per shared account as a day for the date field; empty for no end.
+  const initialEnds = Object.fromEntries(Object.entries(connection?.share_ends ?? {}).map(([id, iso]) => [id, toDateInput(iso)]))
+  const [shareEnds, setShareEnds] = useState<Record<string, string>>(initialEnds)
   const [tab, setTab] = useState<Tab>(startTab)
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -65,8 +69,11 @@ export function ConnectionDialog({ connection, onClose, startTab = 'basics' }: {
             : await api.post<Connection>('/api/connections', effective)
       if (draft.auth === 'password' && password) await api.put(`/api/vault/passwords/${saved.id}`, { password })
       const before = connection?.shared_with ?? []
-      if ([...shareIds].sort().join(',') !== [...before].sort().join(',')) {
-        await api.put(`/api/connections/${saved.id}/share`, { account_ids: shareIds })
+      const endsChanged = shareIds.some((id) => (shareEnds[String(id)] ?? '') !== (initialEnds[String(id)] ?? ''))
+      if (endsChanged || [...shareIds].sort().join(',') !== [...before].sort().join(',')) {
+        await api.put(`/api/connections/${saved.id}/share`, {
+          shares: shareIds.map((id) => ({ account_id: id, expires_at: endOfDay(shareEnds[String(id)] ?? '') })),
+        })
       }
       await reloadConnections()
       onClose()
@@ -264,21 +271,39 @@ export function ConnectionDialog({ connection, onClose, startTab = 'basics' }: {
                 .filter((other) => other.id !== account?.id)
                 .map((other) => {
                   const checked = shareIds.includes(other.id)
+                  const end = shareEnds[String(other.id)] ?? ''
+                  const ranOut = checked && isPast(endOfDay(end))
                   return (
-                    <label key={other.id} className="flex cursor-pointer items-center gap-3 rounded-xl border border-ink-700 p-3 hover:bg-ink-800">
-                      <input
-                        type="checkbox"
-                        className="accent-accent-500"
-                        checked={checked}
-                        onChange={() => setShareIds(checked ? shareIds.filter((id) => id !== other.id) : [...shareIds, other.id])}
-                      />
-                      <span className="flex h-7 w-7 items-center justify-center rounded-full bg-ink-800 text-xs font-semibold text-mist-300 uppercase">{other.name.slice(0, 1)}</span>
-                      <span className="text-sm text-mist-100">{other.name}</span>
-                    </label>
+                    <div key={other.id} className="flex flex-wrap items-center gap-3 rounded-xl border border-ink-700 p-3 hover:bg-ink-800">
+                      <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-3">
+                        <input
+                          type="checkbox"
+                          className="accent-accent-500"
+                          checked={checked}
+                          onChange={() => setShareIds(checked ? shareIds.filter((id) => id !== other.id) : [...shareIds, other.id])}
+                        />
+                        <span className="flex h-7 w-7 items-center justify-center rounded-full bg-ink-800 text-xs font-semibold text-mist-300 uppercase">{other.name.slice(0, 1)}</span>
+                        <span className="text-sm text-mist-100">{other.name}</span>
+                        {ranOut && <Badge tone="bad">{t('expiry.ranOut')}</Badge>}
+                      </label>
+                      {checked && (
+                        <label className="flex items-center gap-2 text-xs text-mist-400">
+                          {t('expiry.until')}
+                          <input
+                            type="date"
+                            value={end}
+                            onChange={(event) => setShareEnds({ ...shareEnds, [String(other.id)]: event.target.value })}
+                            aria-label={t('expiry.shareUntil', { name: other.name })}
+                            className="rounded-lg border border-ink-700 bg-ink-900 px-2 py-1 text-xs text-mist-100 focus:border-accent-500 focus:outline-none"
+                          />
+                        </label>
+                      )}
+                    </div>
                   )
                 })}
               {(names.data?.length ?? 0) <= 1 && <p className="text-sm text-mist-500">{t('edit.nobodyToShare')}</p>}
             </div>
+            <p className="text-xs text-mist-500">{t('expiry.shareHint')}</p>
             <Banner>{t('edit.shareNote')}</Banner>
           </>
         )}

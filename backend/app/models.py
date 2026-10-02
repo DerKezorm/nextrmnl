@@ -87,6 +87,12 @@ class Account(Base):
     last_seen_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
     failed_logins: Mapped[int] = mapped_column(Integer, default=0)
     locked_until: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
+    #: A guest account ends here: no sign-in, no session, its terminals close. Never set for the operator.
+    expires_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
+
+    @property
+    def expired(self) -> bool:
+        return self.role != OPERATOR and self.expires_at is not None and self.expires_at <= utcnow()
 
     @property
     def vault_ready(self) -> bool:
@@ -135,6 +141,8 @@ class Invite(Base):
     created_by: Mapped[int] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"))
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow)
     expires_at: Mapped[datetime] = mapped_column(UtcDateTime)
+    #: The account created from this invitation is a guest until then. Empty: no end.
+    account_expires_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
 
 
 KEY_TYPES = ("ed25519", "rsa", "ecdsa")
@@ -217,6 +225,19 @@ class ConnectionShare(Base):
     key_id: Mapped[int | None] = mapped_column(ForeignKey("vault_keys.id", ondelete="SET NULL"), nullable=True)
     #: The member's own command after sign-in. The owner's command never runs in a member's shell.
     start_command: Mapped[str] = mapped_column(String(255), default="")
+    #: The share ends here: the connection disappears for the member and their terminals on it close. The row
+    #: stays, so the owner sees it ran out and can extend it.
+    expires_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
+
+    @property
+    def active(self) -> bool:
+        return self.expires_at is None or self.expires_at > utcnow()
+
+
+def active_share(db: Any, connection_id: int, account_id: int) -> ConnectionShare | None:
+    """The share that gives an account access right now: present and not run out."""
+    share = db.get(ConnectionShare, {"connection_id": connection_id, "account_id": account_id})
+    return share if share is not None and share.active else None
 
 
 class Snippet(Base):

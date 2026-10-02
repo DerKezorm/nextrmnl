@@ -11,6 +11,7 @@ import { Symbol } from '../components/Symbol'
 import { TabRow } from '../components/TabRow'
 import { Badge, Banner, Button, Field, PageHeader, PageLoading, Section, SelectField, Spinner, Switch } from '../components/ui'
 import { writeClipboard } from '../lib/clipboard'
+import { endOfDay, isPast, toDateInput, todayInput } from '../lib/dates'
 import { formatDateTime, formatRelative } from '../lib/format'
 import { MIN_PASSWORD } from '../lib/rules'
 import { cleanFontName, PREFS_EVENT, setTerminalPref, terminalPrefs, type TerminalPrefs } from '../lib/terminalPrefs'
@@ -389,6 +390,9 @@ function AccountSettings() {
   const [inviting, setInviting] = useState(false)
   const [inviteName, setInviteName] = useState('')
   const [inviteRole, setInviteRole] = useState('member')
+  const [inviteUntil, setInviteUntil] = useState('')
+  const [ending, setEnding] = useState<Account | null>(null)
+  const [endDay, setEndDay] = useState('')
   const [link, setLink] = useState<InviteInfo | null>(null)
   const [removing, setRemoving] = useState<Account | null>(null)
   const [resetting, setResetting] = useState<Account | null>(null)
@@ -427,9 +431,16 @@ function AccountSettings() {
   async function invite() {
     setBusy(true)
     try {
-      setLink(await api.post<InviteInfo>('/api/accounts/invites', { name: inviteName.trim(), role: inviteRole }))
+      setLink(
+        await api.post<InviteInfo>('/api/accounts/invites', {
+          name: inviteName.trim(),
+          role: inviteRole,
+          account_expires_at: inviteRole === 'member' ? endOfDay(inviteUntil) : null,
+        }),
+      )
       setInviting(false)
       setInviteName('')
+      setInviteUntil('')
       void invites.reload()
     } catch (error) {
       notify(errorMessage(error))
@@ -453,6 +464,21 @@ function AccountSettings() {
       void accounts.reload()
     } catch (error) {
       notify(errorMessage(error))
+    }
+  }
+
+  async function saveEnd(day: string) {
+    if (!ending) return
+    setBusy(true)
+    try {
+      await api.put(`/api/accounts/${ending.id}/expiry`, { expires_at: endOfDay(day) })
+      notify(day ? t('expiry.accountSet', { name: ending.name }) : t('expiry.accountCleared', { name: ending.name }))
+      setEnding(null)
+      void accounts.reload()
+    } catch (error) {
+      notify(errorMessage(error))
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -495,6 +521,12 @@ function AccountSettings() {
                     {isMe && <span className="text-xs text-mist-500">({t('settings.you')})</span>}
                     <Badge tone={account.role === 'operator' ? 'accent' : 'neutral'}>{t(`settings.role.${account.role}`)}</Badge>
                     {account.two_factor && <Badge tone="neutral">{t('twofactor.title')}</Badge>}
+                    {account.expires_at &&
+                      (isPast(account.expires_at) ? (
+                        <Badge tone="bad">{t('expiry.ranOut')}</Badge>
+                      ) : (
+                        <Badge tone="warn">{t('expiry.guestUntil', { when: formatDateTime(account.expires_at) })}</Badge>
+                      ))}
                   </p>
                   <p className="text-xs text-mist-500">
                     {account.sign_in === 'oidc' ? t('settings.viaOidc') : t('settings.viaPassword')} · {account.last_seen_at ? t('settings.lastSeen', { when: formatRelative(account.last_seen_at) }) : t('settings.neverSeen')}
@@ -505,6 +537,18 @@ function AccountSettings() {
                     <Button variant="ghost" size="sm" onClick={() => setForcing(account)}>
                       {t('settings.forceSignOut')}
                     </Button>
+                    {account.role === 'member' && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setEnding(account)
+                          setEndDay(toDateInput(account.expires_at))
+                        }}
+                      >
+                        {t('expiry.button')}
+                      </Button>
+                    )}
                     {account.two_factor && (
                       <Button variant="ghost" size="sm" onClick={() => setResetting(account)}>
                         {t('twofactor.reset')}
@@ -531,6 +575,7 @@ function AccountSettings() {
                   <span className="text-mist-200">{entry.name || t('settings.inviteNoName')}</span>
                   <Badge>{t(`settings.role.${entry.role}`)}</Badge>
                   <span className="text-xs text-mist-500">{t('settings.inviteExpires', { when: formatDateTime(entry.expires_at) })}</span>
+                  {entry.account_expires_at && <Badge tone="warn">{t('expiry.guestUntil', { when: formatDateTime(entry.account_expires_at) })}</Badge>}
                   <button type="button" onClick={() => void withdraw(entry.id)} className="ml-auto text-xs text-mist-500 hover:text-bad-500">
                     {t('settings.inviteWithdraw')}
                   </button>
@@ -563,6 +608,31 @@ function AccountSettings() {
           <option value="member">{t('settings.role.member')}</option>
           <option value="operator">{t('settings.role.operator')}</option>
         </SelectField>
+        {inviteRole === 'member' && (
+          <Field label={t('expiry.inviteUntil')} hint={t('expiry.inviteUntilHint')} type="date" min={todayInput()} value={inviteUntil} onChange={(event) => setInviteUntil(event.target.value)} />
+        )}
+      </Dialog>
+
+      <Dialog
+        open={ending !== null}
+        title={t('expiry.accountTitle', { name: ending?.name ?? '' })}
+        onClose={() => setEnding(null)}
+        footer={
+          <>
+            {ending?.expires_at && (
+              <Button variant="ghost" loading={busy} onClick={() => void saveEnd('')}>
+                {t('expiry.noEnd')}
+              </Button>
+            )}
+            <Button loading={busy} disabled={!endDay} onClick={() => void saveEnd(endDay)}>
+              {t('common.save')}
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm text-mist-300">{t('expiry.accountLead')}</p>
+        <Field label={t('expiry.until')} type="date" value={endDay} onChange={(event) => setEndDay(event.target.value)} />
+        <Banner tone="warn">{t('expiry.accountWarn')}</Banner>
       </Dialog>
 
       <Dialog open={link !== null} title={t('settings.inviteLinkTitle')} onClose={() => setLink(null)} footer={<Button onClick={() => setLink(null)}>{t('common.done')}</Button>}>

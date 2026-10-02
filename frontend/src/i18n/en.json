@@ -294,7 +294,22 @@
       "wrong_password": "The password is wrong.",
       "api_key_name_missing": "Give the key a name.",
       "api_key_name_too_long": "The name may be 64 characters at most.",
-      "api_key_limit": "There are already 20 keys. Delete one first."
+      "api_key_limit": "There are already 20 keys. Delete one first.",
+      "account_expired": "This account has expired. The operator can extend it.",
+      "operator_cannot_expire": "An operator account does not expire.",
+      "expiry_in_past": "The end must lie in the future.",
+      "too_many_snippets": "More than 500 commands per account are not possible.",
+      "api_key_invalid": "This API key is not valid.",
+      "api_key_missing": "This address needs an API key in the Authorization header.",
+      "api_keys_off": "API keys are switched off in this installation.",
+      "archive_too_large": "The archive is larger than 2 GB.",
+      "backup_failed": "The backup could not be made. The log names the reason.",
+      "file_too_large": "The file is larger than any vault file.",
+      "invalid_mode": "Choose merge or replace.",
+      "second_factor_unavailable": "The second factor cannot be read right now because the server key does not match. The log has details.",
+      "session_not_open": "The session is not connected yet.",
+      "too_large": "The file is larger than 4 GB.",
+      "url_invalid": "The authentik address must start with http:// or https://."
     },
     "generic": "Something went wrong.",
     "http": "The server answered with an error (HTTP {{status}}).",
@@ -711,7 +726,10 @@
       "target_not_allowed": "This target is outside the allowed networks.",
       "timeout": "No answer after 10 seconds.",
       "unreachable": "The machine cannot be reached.",
-      "vault_locked": "The vault is locked. Open it and reconnect."
+      "vault_locked": "The vault is locked. Open it and reconnect.",
+      "access_ended": "The share for this connection ran out or was taken back.",
+      "signed_out": "The sign-in behind it ended, and so did the session.",
+      "too_many_attempts": "Too many refused sign-ins in a row. Wait a moment, then connect again."
     },
     "latency": "{{ms}} ms",
     "reconnectHint": "Enter reconnects.",
@@ -964,5 +982,22 @@
     "unknownTitle": "Connection not found",
     "unknown": "This connection does not exist, or it is not shared with your account.",
     "toWorkspace": "To the connections"
+  },
+  "expiry": {
+    "until": "until",
+    "ranOut": "ran out",
+    "guestUntil": "Guest until {{when}}",
+    "button": "End",
+    "shareUntil": "Share with {{name}} ends on",
+    "shareHint": "Without a date the share lasts until you take it back. When it ends, the connection disappears for the other account and its open sessions on it end.",
+    "inviteUntil": "Guest account until",
+    "inviteUntilHint": "Leave empty for an account without an end. At the end the account is locked and its sessions end.",
+    "accountTitle": "End for {{name}}",
+    "accountLead": "Until this day the account can sign in. After that it is locked, but kept, and can be extended again.",
+    "accountWarn": "A date in the past locks at once: every browser and open session of the account ends.",
+    "noEnd": "No end",
+    "accountSet": "End for {{name}} saved.",
+    "accountCleared": "{{name}} has no end any more.",
+    "shareEnds": "Shared until {{when}}"
   }
 }

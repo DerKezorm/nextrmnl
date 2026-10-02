@@ -10,6 +10,7 @@ import { useNotice } from '../Notice'
 import { Symbol } from '../Symbol'
 import { Banner, Button } from '../ui'
 import { writeClipboard } from '../../lib/clipboard'
+import { formatDateTime } from '../../lib/format'
 import { ImportDialog } from './ImportDialog'
 
 function ReachDot({ reach }: { reach: Reach }) {
@@ -259,6 +260,9 @@ export function ConnectionList({
                               {connection.user}@{connection.host}
                               {connection.port !== 22 ? `:${connection.port}` : ''}
                             </span>
+                            {connection.share_expires_at && (
+                              <span className="block truncate text-[11px] text-warn-500">{t('expiry.shareEnds', { when: formatDateTime(connection.share_expires_at) })}</span>
+                            )}
                           </span>
                           {running && <span className="rounded-full bg-accent-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-accent-400">{t('list.open')}</span>}
                         </button>

@@ -21,6 +21,8 @@ export interface Account {
   prefs: Record<string, unknown>
   created_at: string
   last_seen_at: string | null
+  /** A guest account ends here; null for no end. */
+  expires_at: string | null
 }
 
 /** The password step of a sign-in with a second factor: nothing is open yet. */
@@ -55,6 +57,8 @@ export interface InviteInfo {
   name: string
   role: Role
   expires_at: string
+  /** The account made from it is a guest until then. */
+  account_expires_at: string | null
   link?: string
 }
 
@@ -84,6 +88,10 @@ export interface Connection {
   owner_id: number
   shared_by: string | null
   shared_with: number[]
+  /** For the owner: when each share ends, by account id; null for no end. */
+  share_ends: Record<string, string | null>
+  /** For a member: when the own share ends. */
+  share_expires_at: string | null
   host_key: HostKeyInfo
   last_used_at: string | null
   created_at: string

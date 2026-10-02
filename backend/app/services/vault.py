@@ -19,7 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .. import crypto
-from ..models import KEY_TYPES, Account, ConnectionShare, VaultKey, VaultPassword, utcnow
+from ..models import KEY_TYPES, Account, ConnectionShare, VaultKey, VaultPassword, active_share, utcnow
 
 logger = logging.getLogger("nextrmnl.vault")
 
@@ -255,7 +255,8 @@ def list_passwords(db: Session, account_id: int) -> list[VaultPassword]:
 
 
 def share_of(db: Session, account_id: int, connection_id: int) -> ConnectionShare | None:
-    return db.get(ConnectionShare, {"connection_id": connection_id, "account_id": account_id})
+    """The member's share, if it gives access right now; a run-out share is as good as none."""
+    return active_share(db, connection_id, account_id)
 
 
 def _password_row(db: Session, account_id: int, connection_id: int) -> VaultPassword | None:

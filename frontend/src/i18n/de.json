@@ -294,7 +294,22 @@
       "wrong_password": "Das Passwort stimmt nicht.",
       "api_key_name_missing": "Gib dem Schlüssel einen Namen.",
       "api_key_name_too_long": "Der Name darf höchstens 64 Zeichen haben.",
-      "api_key_limit": "Es gibt schon 20 Schlüssel. Lösch zuerst einen."
+      "api_key_limit": "Es gibt schon 20 Schlüssel. Lösch zuerst einen.",
+      "account_expired": "Dieses Konto ist abgelaufen. Der Betreiber kann es verlängern.",
+      "operator_cannot_expire": "Ein Betreiberkonto läuft nicht ab.",
+      "expiry_in_past": "Das Ende muss in der Zukunft liegen.",
+      "too_many_snippets": "Mehr als 500 Befehle je Konto gehen nicht.",
+      "api_key_invalid": "Dieser API-Schlüssel gilt nicht.",
+      "api_key_missing": "Diese Adresse braucht einen API-Schlüssel im Authorization-Kopf.",
+      "api_keys_off": "API-Schlüssel sind in dieser Installation ausgeschaltet.",
+      "archive_too_large": "Das Archiv ist größer als 2 GB.",
+      "backup_failed": "Die Sicherung ließ sich nicht anlegen. Das Protokoll nennt den Grund.",
+      "file_too_large": "Die Datei ist größer als jede Tresor-Datei.",
+      "invalid_mode": "Wähle Ergänzen oder Ersetzen.",
+      "second_factor_unavailable": "Der zweite Faktor ist gerade nicht lesbar, weil der Serverschlüssel nicht passt. Das Protokoll nennt Einzelheiten.",
+      "session_not_open": "Die Sitzung ist noch nicht verbunden.",
+      "too_large": "Die Datei ist größer als 4 GB.",
+      "url_invalid": "Die authentik-Adresse muss mit http:// oder https:// beginnen."
     },
     "generic": "Da ist etwas schiefgegangen.",
     "http": "Der Server hat mit einem Fehler geantwortet (HTTP {{status}}).",
@@ -711,7 +726,10 @@
       "target_not_allowed": "Dieses Ziel liegt außerhalb der erlaubten Netze.",
       "timeout": "Keine Antwort nach 10 Sekunden.",
       "unreachable": "Der Rechner ist nicht erreichbar.",
-      "vault_locked": "Der Tresor ist gesperrt. Öffne ihn und verbinde neu."
+      "vault_locked": "Der Tresor ist gesperrt. Öffne ihn und verbinde neu.",
+      "access_ended": "Die Freigabe für diese Verbindung ist abgelaufen oder wurde entzogen.",
+      "signed_out": "Die Anmeldung dahinter ist beendet, die Sitzung auch.",
+      "too_many_attempts": "Zu viele abgelehnte Anmeldungen hintereinander. Kurz warten, dann neu verbinden."
     },
     "latency": "{{ms}} ms",
     "reconnectHint": "Enter verbindet neu.",
@@ -964,5 +982,22 @@
     "unknownTitle": "Verbindung nicht gefunden",
     "unknown": "Diese Verbindung gibt es nicht, oder sie ist für dein Konto nicht freigegeben.",
     "toWorkspace": "Zu den Verbindungen"
+  },
+  "expiry": {
+    "until": "bis",
+    "ranOut": "abgelaufen",
+    "guestUntil": "Gast bis {{when}}",
+    "button": "Ablauf",
+    "shareUntil": "Freigabe für {{name}} endet am",
+    "shareHint": "Ohne Datum gilt die Freigabe, bis du sie entziehst. Endet sie, verschwindet die Verbindung beim anderen Konto, und seine offenen Sitzungen darauf enden.",
+    "inviteUntil": "Gastkonto bis",
+    "inviteUntilHint": "Leer lassen für ein Konto ohne Ende. Am Ende ist das Konto gesperrt und seine Sitzungen enden.",
+    "accountTitle": "Ablauf für {{name}}",
+    "accountLead": "Bis zu diesem Tag kann sich das Konto anmelden. Danach ist es gesperrt, bleibt aber erhalten und lässt sich wieder verlängern.",
+    "accountWarn": "Ein Datum in der Vergangenheit sperrt sofort: Alle Browser und offenen Sitzungen des Kontos enden.",
+    "noEnd": "Ohne Ende",
+    "accountSet": "Ablauf für {{name}} gespeichert.",
+    "accountCleared": "{{name}} hat jetzt kein Ende mehr.",
+    "shareEnds": "Freigabe bis {{when}}"
   }
 }

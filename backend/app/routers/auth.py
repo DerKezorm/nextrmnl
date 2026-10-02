@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, Response
@@ -56,6 +57,13 @@ class PrefsIn(BaseModel):
 class InviteIn(BaseModel):
     name: str = Field(default="", max_length=64)
     role: str = Field(default="member")
+    #: The account made from this invitation is a guest until then; empty for no end.
+    account_expires_at: datetime | None = None
+
+
+class ExpiryIn(BaseModel):
+    #: When the account ends; null takes the end away.
+    expires_at: datetime | None = None
 
 
 class InviteAcceptIn(BaseModel):
@@ -121,6 +129,7 @@ def account_view(db: DbSession, account: Account) -> dict[str, Any]:
         "prefs": account.prefs or {},
         "created_at": account.created_at.isoformat(),
         "last_seen_at": account.last_seen_at.isoformat() if account.last_seen_at else None,
+        "expires_at": account.expires_at.isoformat() if account.expires_at else None,
     }
 
 
@@ -315,14 +324,47 @@ def set_role(account_id: int, payload: RoleIn, operator: OperatorAccount, db: Db
     if row.id == operator.id and payload.role != "operator":
         raise fehler("cannot_demote_self", "You cannot take the operator role from yourself.", 409)
     row.role = payload.role
+    if row.role == "operator":
+        # An operator does not run out.
+        row.expires_at = None
     db.commit()
+    return account_view(db, row)
+
+
+@router.put("/accounts/{account_id}/expiry", summary="Operator: when a member account ends, or no end")
+def set_expiry(account_id: int, payload: ExpiryIn, operator: OperatorAccount, db: DbSession) -> dict[str, Any]:
+    row = db.get(Account, account_id)
+    if row is None:
+        raise fehler("not_found", "Account not found.", 404)
+    if row.role == "operator":
+        raise fehler("operator_cannot_expire", "An operator account does not expire.", 422)
+    if payload.expires_at is not None and payload.expires_at.tzinfo is None:
+        raise fehler("invalid_input", "Give the end with a time zone.", 422)
+    row.expires_at = payload.expires_at
+    db.commit()
+    if row.expired:
+        # Ended now: every browser of it is out, and its terminals close at once rather than within the watch.
+        end_all_sessions(db, row.id)
+        end_ssh_sessions(row.id, "signed_out")
+    logger.info(
+        "Account expiry set name=%s expires_at=%s by=%s",
+        row.name,
+        row.expires_at.isoformat() if row.expires_at else "-",
+        operator.name,
+    )
     return account_view(db, row)
 
 
 @router.get("/accounts/invites", summary="Open invitations")
 def list_invites(operator: OperatorAccount, db: DbSession) -> list[dict[str, Any]]:
     return [
-        {"id": row.id, "name": row.name, "role": row.role, "expires_at": row.expires_at.isoformat()}
+        {
+            "id": row.id,
+            "name": row.name,
+            "role": row.role,
+            "expires_at": row.expires_at.isoformat(),
+            "account_expires_at": row.account_expires_at.isoformat() if row.account_expires_at else None,
+        }
         for row in accounts.list_invites(db)
     ]
 
@@ -330,7 +372,9 @@ def list_invites(operator: OperatorAccount, db: DbSession) -> list[dict[str, Any
 @router.post("/accounts/invites", status_code=201, summary="Invite an account; the link is shown once")
 def create_invite(payload: InviteIn, request: Request, operator: OperatorAccount, db: DbSession) -> dict[str, Any]:
     try:
-        invite, token = accounts.create_invite(db, operator, payload.name, payload.role)
+        if payload.account_expires_at is not None and payload.account_expires_at.tzinfo is None:
+            raise AccountError("invalid_input", "Give the end with a time zone.", 422)
+        invite, token = accounts.create_invite(db, operator, payload.name, payload.role, payload.account_expires_at)
     except AccountError as error:
         raise _raise(error) from error
     base = settings_service.public_url(db) or str(request.base_url).rstrip("/")
@@ -339,6 +383,7 @@ def create_invite(payload: InviteIn, request: Request, operator: OperatorAccount
         "name": invite.name,
         "role": invite.role,
         "expires_at": invite.expires_at.isoformat(),
+        "account_expires_at": invite.account_expires_at.isoformat() if invite.account_expires_at else None,
         "link": f"{base}/invite/{token}",
     }
 

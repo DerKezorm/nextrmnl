@@ -80,8 +80,8 @@ from ..models import (
     OPERATOR,
     Account,
     Connection,
-    ConnectionShare,
     SessionRecord,
+    active_share,
     utcnow,
 )
 from ..security import brake, session_account
@@ -118,6 +118,8 @@ DETAIL_EXIT = "exit"
 DETAIL_INTERNAL = "internal_error"
 #: The browser session behind the terminal ended: sign-out, deletion, a reset, or the operator ended it.
 DETAIL_SIGNED_OUT = "signed_out"
+#: The share the session runs on ran out or was taken back, or the connection was deleted.
+DETAIL_ACCESS = "access_ended"
 #: Too many refused sign-ins at targets in a row; the account waits before the next connect.
 DETAIL_TOO_MANY = "too_many_attempts"
 #: Live sessions one account may hold; more is a script, not a person.
@@ -182,8 +184,7 @@ def _accessible(db: Session, account: Account, connection_id: int) -> Connection
         return None
     if row.owner_id == account.id:
         return row
-    share = db.get(ConnectionShare, {"connection_id": connection_id, "account_id": account.id})
-    return row if share is not None else None
+    return row if active_share(db, connection_id, account.id) is not None else None
 
 
 def target_from_connection(db: Session, account: Account, row: Connection, depth: int = 0) -> Target:
@@ -193,7 +194,7 @@ def target_from_connection(db: Session, account: Account, row: Connection, depth
         # A shared connection carries the owner's key, which nobody else can read. The member signs in with
         # their own user name and their own key or password from their own vault (``ConnectionShare``), and
         # only their own command runs in their shell: the owner's would run with the member's rights.
-        share = db.get(ConnectionShare, {"connection_id": row.id, "account_id": account.id})
+        share = active_share(db, row.id, account.id)
         auth = share.auth if share is not None and share.auth in (AUTH_KEY, AUTH_PASSWORD, AUTH_ASK) else AUTH_ASK
         key_id = share.key_id if share is not None and auth == AUTH_KEY else None
         user = share.user if share is not None and share.user else row.user
@@ -317,6 +318,20 @@ def _sign_in_alive(token: str) -> bool:
         return session_account(db, token) is not None
 
 
+def _access_alive(account_id: int, target: Target) -> bool:
+    """Every saved connection in the chain is still the account's own or shared with it right now."""
+    with SessionLocal() as db:
+        account = db.get(Account, account_id)
+        if account is None:
+            return False
+        hop: Target | None = target
+        while hop is not None:
+            if hop.connection_id is not None and _accessible(db, account, hop.connection_id) is None:
+                return False
+            hop = hop.jump
+        return True
+
+
 class SshSession:
     def __init__(self, account: Account, target: Target, from_ip: str, cols: int, rows: int) -> None:
         self.id = secrets.token_urlsafe(12)
@@ -353,6 +368,8 @@ class SshSession:
         self._close_requested = False
         #: Set by ``attach`` when a browser comes back to a detached session.
         self._returned = asyncio.Event()
+        #: Why the watch ended the session: the sign-in or the access.
+        self._watch_detail = DETAIL_SIGNED_OUT
         #: The next resize redraws the screen even at the same size (after a browser came back).
         self._redraw_pending = False
         self._output: deque[bytes] = deque()
@@ -838,7 +855,7 @@ class SshSession:
                 if pump in done:
                     break
                 if watch in done:
-                    self._set_end(END_CUT, DETAIL_SIGNED_OUT)
+                    self._set_end(END_CUT, self._watch_detail)
                     await self._send_closed()
                     self._close_connections()
                     return
@@ -953,15 +970,19 @@ class SshSession:
                 task.cancel()
 
     async def _watch_auth(self) -> None:
-        """Returns once the browser session behind this terminal is gone: signed out elsewhere, deleted, expired.
-        A cookie is checked at the handshake only; without this a shell would outlive the sign-in it came with."""
+        """Returns once the browser session behind this terminal is gone (signed out elsewhere, deleted, the
+        account expired) or the access it came with is (a share ran out or was taken back). A cookie and a share
+        are checked at the handshake only; without this a shell would outlive both."""
         while True:
             await asyncio.sleep(AUTH_WATCH_SECONDS)
             token = self.session_token
-            if token is None:
-                continue
-            if not await asyncio.to_thread(_sign_in_alive, token):
+            if token is not None and not await asyncio.to_thread(_sign_in_alive, token):
                 logger.info("Session cut, sign-in ended account=%s target=%s", self.account_name, self.target.label)
+                self._watch_detail = DETAIL_SIGNED_OUT
+                return
+            if not await asyncio.to_thread(_access_alive, self.account_id, self.target):
+                logger.info("Session cut, access ended account=%s target=%s", self.account_name, self.target.label)
+                self._watch_detail = DETAIL_ACCESS
                 return
 
     async def _send_closed(self) -> None:

@@ -20,4 +20,7 @@ paths = [
 regexes = [
   # The reserved documentation domain.
   '''example\.(com|org|net)''',
+  # Keyboard shortcuts in the translations ("keysSearchWhich": "Strg+Umschalt+F"): only key names joined by a
+  # plus and one final key, nothing else. generic-api-key read the key name "keys…" and the value as a token.
+  '''^(?:(?:Strg|Ctrl|Umschalt|Shift|Alt|Einfg|Insert|Cmd)\+)+[A-Z0-9]$''',
 ]

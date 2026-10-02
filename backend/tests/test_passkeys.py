@@ -24,7 +24,7 @@ from tests.conftest import PASSWORD, UI, invite_member
 
 ORIGIN = "https://ssh.example.com"
 #: Built at run time, so the secret scanner does not take a test value for a real password.
-WRONG = "-".join(["not", "the", "password"])
+WRONG = PASSWORD[::-1]
 RP_ID = "ssh.example.com"
 
 

@@ -3,7 +3,9 @@
 The return leg is a browser redirect, not an API answer: the provider sends the browser back with GET, and a
 human sees whatever comes out. So every outcome of the callback, every failure included, ends in a redirect
 to the sign-in page with a code in the address (``/login?error=<code>``), never in bare JSON. Success ends on
-``/`` with the ordinary session cookie.
+``/`` with the ordinary session cookie, or on the page the sign-in started from when that is one of nextrmnl's
+own (``/start?next=/connect/12``: a direct link survives the way through the provider). ``oidc.safe_next``
+decides, on the way out and again on the way back; anything else lands on ``/``.
 
 Accounts: an account with this ``oidc_subject`` signs in. Otherwise an account with the same **verified**
 address and no subject yet is linked (the bridge for operators who invited people by hand before turning on
@@ -24,7 +26,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Request, Response
+from fastapi import APIRouter, Query, Request, Response
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
@@ -132,11 +134,15 @@ def forget_subjects(db: DbSession, previous: str, issuer: str) -> None:
 
 
 def _set_attempt_cookie(
-    response: Response, request: Request, attempt: oidc.Attempt, link_account_id: int | None
+    response: Response,
+    request: Request,
+    attempt: oidc.Attempt,
+    link_account_id: int | None,
+    next_path: str | None = None,
 ) -> None:
     response.set_cookie(
         oidc.COOKIE_NAME,
-        oidc.pack_attempt(attempt, link_account_id),
+        oidc.pack_attempt(attempt, link_account_id, next_path),
         max_age=oidc.ATTEMPT_MINUTES * 60,
         path=oidc.COOKIE_PATH,
         httponly=True,
@@ -149,9 +155,12 @@ def _set_attempt_cookie(
 
 
 @router.get("/start", summary="Send the browser to the provider (no sign-in needed)")
-async def start(request: Request, db: DbSession) -> RedirectResponse:
+async def start(
+    request: Request, db: DbSession, next_path: str | None = Query(default=None, alias="next")
+) -> RedirectResponse:
     # Public: this is the sign-in button. Failures land on the sign-in page with a code; a JSON error here
-    # would be seen only by the person least able to do anything with it.
+    # would be seen only by the person least able to do anything with it. ``next`` is the page the button was
+    # pressed on; a foreign one is dropped here without a word, the sign-in itself goes on.
     if not _configured(db):
         return _to_login("oidc_not_configured")
     try:
@@ -163,7 +172,7 @@ async def start(request: Request, db: DbSession) -> RedirectResponse:
     client_id = str(settings_service.get(db, "oidc_client_id"))
     url = oidc.authorization_url(description, client_id, _redirect_uri(db, request), attempt)
     response = RedirectResponse(url, status_code=302)
-    _set_attempt_cookie(response, request, attempt, None)
+    _set_attempt_cookie(response, request, attempt, None, oidc.safe_next(next_path))
     return response
 
 
@@ -274,7 +283,9 @@ async def callback(
     # A password account that arrives through the provider is not asked for nextrmnl's own second factor: on
     # this path the provider is in charge of that, as the account page says. The required mode still binds it
     # (``setup_required``), because the account can also sign in with its password.
-    response = RedirectResponse(HOME, status_code=303)
+    # Checked again on the way back: the cookie is signed, but a target that was never checked must not be
+    # able to ride on it, whatever wrote the cookie.
+    response = RedirectResponse(oidc.safe_next(attempt.get("next")) or HOME, status_code=303)
     _delete_attempt_cookie(response)
     token = start_session(db, account, client_ip(request), request.headers.get("user-agent", ""))
     _set_cookie(response, request, token)

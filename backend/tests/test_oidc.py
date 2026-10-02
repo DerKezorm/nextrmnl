@@ -147,9 +147,11 @@ def fresh_browser(client: TestClient) -> TestClient:
     return TestClient(client.app, base_url="http://testserver")
 
 
-def start(browser: TestClient, provider: FakeProvider) -> dict[str, str]:
-    """Click the button; returns the parameters of the redirect and tells the provider the PKCE challenge."""
-    response = browser.get("/api/oidc/start", follow_redirects=False)
+def start(browser: TestClient, provider: FakeProvider, next_path: str | None = None) -> dict[str, str]:
+    """Click the button; returns the parameters of the redirect and tells the provider the PKCE challenge.
+    ``next_path`` is the page the button was pressed on, as the sign-in page sends it."""
+    params = {"next": next_path} if next_path is not None else None
+    response = browser.get("/api/oidc/start", params=params, follow_redirects=False)
     assert response.status_code == 302, response.text
     target = urlsplit(response.headers["location"])
     assert f"{target.scheme}://{target.netloc}{target.path}" == f"{ISSUER}/auth"
@@ -491,6 +493,111 @@ def test_second_callback_for_the_same_subject_signs_into_the_same_account(
     assert response.headers["location"] == "/"
     assert again.get("/api/auth/me").json()["name"] == "alex"
     assert account_count() == 2
+
+
+# ---------------------------------------------------------------------------
+# Return: where the browser lands
+# ---------------------------------------------------------------------------
+
+
+def test_a_direct_link_survives_the_way_through_the_provider(
+    client: TestClient, operator: dict, provider: FakeProvider
+) -> None:
+    """A dashboard tile opens /connect/12 with an expired session: the sign-in page shows, the person picks
+    the provider, and after it the browser is back on /connect/12, not on the start page."""
+    configure(client)
+    browser = fresh_browser(client)
+    values = start(browser, provider, next_path="/connect/12")
+    provider.claims = {"nonce": values["nonce"]}
+    response = come_back(browser, values["state"])
+    assert response.status_code == 303, response.text
+    assert response.headers["location"] == "/connect/12"
+    assert browser.cookies.get("nextrmnl_session")
+    assert not browser.cookies.get(oidc.COOKIE_NAME)
+
+
+@pytest.mark.parametrize("own", ["/", "/sessions", "/vault", "/settings", "/about", "/connect/1", "/connect/9999999999"])
+def test_every_own_page_is_a_target(client: TestClient, operator: dict, provider: FakeProvider, own: str) -> None:
+    configure(client)
+    browser = fresh_browser(client)
+    values = start(browser, provider, next_path=own)
+    provider.claims = {"nonce": values["nonce"]}
+    assert come_back(browser, values["state"]).headers["location"] == own
+
+
+@pytest.mark.parametrize(
+    "foreign",
+    [
+        "https://evil.example.com/",
+        "//evil.example.com",
+        "///evil.example.com",
+        "/\\evil.example.com",
+        "\\\\evil.example.com",
+        "/%2F%2Fevil.example.com",
+        "/connect/12/../../evil",
+        "/connect/12/",
+        "/connect/12?next=//evil.example.com",
+        "/connect/12#x",
+        "/connect/abc",
+        "/connect/0",
+        "/connect/012",
+        "/connect/12345678901",
+        "/connect/12\n",
+        "/settings?tab=account",
+        "/login",
+        "javascript:alert(1)",
+        "connect/12",
+        "",
+    ],
+)
+def test_a_foreign_or_odd_target_ends_on_the_start_page(
+    client: TestClient, operator: dict, provider: FakeProvider, foreign: str
+) -> None:
+    """The guard against an open redirect: a link that sends somebody through a real sign-in and then on to
+    a look-alike page elsewhere. The sign-in itself still works; only the target is dropped."""
+    configure(client)
+    browser = fresh_browser(client)
+    values = start(browser, provider, next_path=foreign)
+    assert "next" not in (oidc.read_attempt(browser.cookies.get(oidc.COOKIE_NAME)) or {})
+    provider.claims = {"nonce": values["nonce"]}
+    response = come_back(browser, values["state"])
+    assert response.status_code == 303, response.text
+    assert response.headers["location"] == "/"
+    assert browser.cookies.get("nextrmnl_session")
+
+
+def test_the_target_is_checked_again_on_the_way_back(
+    client: TestClient, operator: dict, provider: FakeProvider
+) -> None:
+    """Even a cookie that carries a foreign target (whatever wrote it) does not send the browser away."""
+    configure(client)
+    browser = fresh_browser(client)
+    values = start(browser, provider)
+    attempt = oidc.read_attempt(browser.cookies.get(oidc.COOKIE_NAME))
+    assert attempt is not None
+    forged = oidc.pack_attempt(
+        oidc.Attempt(state=attempt["state"], nonce=attempt["nonce"], verifier=attempt["verifier"]),
+        None,
+        "https://evil.example.com/",
+    )
+    browser.cookies.clear()
+    browser.cookies.set(oidc.COOKIE_NAME, forged, path=oidc.COOKIE_PATH)
+    provider.claims = {"nonce": values["nonce"]}
+    response = come_back(browser, values["state"])
+    assert response.status_code == 303, response.text
+    assert response.headers["location"] == "/"
+
+
+def test_a_failed_sign_in_with_a_target_still_ends_on_the_sign_in_page(
+    client: TestClient, operator: dict, provider: FakeProvider
+) -> None:
+    configure(client)
+    browser = fresh_browser(client)
+    values = start(browser, provider, next_path="/connect/12")
+    provider.raw_token = _id_token(key=_FOREIGN_PEM, nonce=values["nonce"])
+    response = come_back(browser, values["state"])
+    assert response.headers["location"] == "/login?error=oidc_token_invalid"
+    assert not browser.cookies.get("nextrmnl_session")
 
 
 def test_existing_password_account_with_the_same_verified_email_is_linked_once(

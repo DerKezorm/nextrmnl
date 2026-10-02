@@ -603,13 +603,30 @@ def _cookie_key() -> bytes:
     return hashlib.sha256(b"nextrmnl-oidc-attempt:" + secret).digest()
 
 
-def pack_attempt(attempt: Attempt, link_account_id: int | None = None) -> str:
+#: Where a sign-in may land after the provider: the app's own pages and a direct link to one connection. A fixed
+#: list and a full match, nothing assembled from the input. Anything else (another host, ``//host``, a backslash,
+#: an encoded slash, a query, a path that climbs) is no target, and the sign-in ends on the start page as it
+#: always did. This is the guard against an open redirect: a link that sends somebody through a real sign-in
+#: and then on to a look-alike page elsewhere.
+_NEXT = re.compile(r"/(?:sessions|vault|settings|about|connect/[1-9][0-9]{0,9})?")
+
+
+def safe_next(value: object) -> str | None:
+    """The page to land on after the provider, or None if ``value`` is not one of nextrmnl's own."""
+    if isinstance(value, str) and _NEXT.fullmatch(value):
+        return value
+    return None
+
+
+def pack_attempt(attempt: Attempt, link_account_id: int | None = None, next_path: str | None = None) -> str:
     """The attempt as a signed, short-lived cookie value.
 
     The state lives with the browser instead of in a table: nothing to clean up, and an unredeemed value is
     worthless after ten minutes. Nobody can forge it without the key; the browser's owner could read it, so
     only values that belong to that browser anyway are inside. ``link_account_id`` marks an attempt that
     links the provider identity to an account that is signed in already, instead of signing somebody in.
+    ``next_path`` is the page the sign-in started from (a direct link), checked with ``safe_next`` before it
+    goes in and again when it comes back.
     """
     now = int(time.time())
     payload: dict[str, Any] = {
@@ -621,6 +638,8 @@ def pack_attempt(attempt: Attempt, link_account_id: int | None = None) -> str:
     }
     if link_account_id is not None:
         payload["link"] = link_account_id
+    if next_path is not None:
+        payload["next"] = next_path
     return jwt.encode(payload, _cookie_key(), algorithm="HS256")
 
 

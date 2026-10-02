@@ -11,6 +11,10 @@ export interface Account {
   sign_in: SignIn
   email: string
   two_factor: boolean
+  /** An authenticator app is set up. */
+  totp: boolean
+  /** How many passkeys the account has. */
+  passkeys: number
   /** Unused recovery codes; 0 without a second factor. */
   two_factor_recovery_left: number
   /** The operator requires a second factor and this account has none yet: only the account page is open. */
@@ -26,8 +30,21 @@ export interface Account {
 }
 
 /** The password step of a sign-in with a second factor: nothing is open yet. */
+export type SecondFactorMethod = 'totp' | 'passkey' | 'recovery'
+
 export interface SecondFactorPending {
   second_factor: true
+  /** What the second step offers; older servers send nothing, which means the app. */
+  methods?: SecondFactorMethod[]
+}
+
+export interface PasskeyInfo {
+  id: number
+  name: string
+  created_at: string
+  last_used_at: string | null
+  /** The first characters of the credential id, to tell two keys apart. */
+  credential: string
 }
 
 export interface TotpEnrolment {

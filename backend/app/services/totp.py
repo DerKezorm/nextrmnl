@@ -164,8 +164,31 @@ def setup_required(db: Session, account: Account) -> bool:
     return (
         bool(settings_service.get(db, "two_factor_required"))
         and account.sign_in == SIGN_IN_PASSWORD
-        and not account.totp_secret_enc
+        and not has_second_factor(db, account)
     )
+
+
+def has_second_factor(db: Session, account: Account) -> bool:
+    """An authenticator app or at least one passkey."""
+    if account.totp_secret_enc:
+        return True
+    from . import passkeys
+
+    return passkeys.count(db, account.id) > 0
+
+
+def methods(db: Session, account: Account) -> list[str]:
+    """What the second step of a sign-in offers: ``totp``, ``passkey``, and ``recovery`` while codes are left."""
+    from . import passkeys
+
+    offered = []
+    if account.totp_secret_enc:
+        offered.append("totp")
+    if passkeys.count(db, account.id) > 0:
+        offered.append("passkey")
+    if load_recovery(account.totp_recovery):
+        offered.append("recovery")
+    return offered
 
 
 # --- Seeds at rest --------------------------------------------------------------------------------------------- #

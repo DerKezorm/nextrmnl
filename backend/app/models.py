@@ -240,6 +240,25 @@ def active_share(db: Any, connection_id: int, account_id: int) -> ConnectionShar
     return share if share is not None and share.active else None
 
 
+class Passkey(Base):
+    """A passkey or security key as the second factor of a password account (WebAuthn). Only the public key is
+    stored; the private one never leaves the device. A passkey does not replace the password: the vault opens
+    with the password alone."""
+
+    __tablename__ = "passkeys"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(64))
+    credential_id: Mapped[bytes] = mapped_column(LargeBinary, unique=True)
+    public_key: Mapped[bytes] = mapped_column(LargeBinary)
+    #: The authenticator's counter; one that goes backwards points to a cloned key.
+    sign_count: Mapped[int] = mapped_column(Integer, default=0)
+    transports: Mapped[Any] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow)
+    last_used_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
+
+
 class Snippet(Base):
     """A command an account keeps at hand. Only its owner sees it; it is text, not a secret, and goes into backups
     like the connections do. Nothing runs it on its own: the browser types it into a terminal, Enter is the

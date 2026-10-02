@@ -15,3 +15,9 @@ python-multipart==0.0.32
 pyjwt==2.15.0
 # The QR code for enrolling an authenticator app. Pure Python, no dependencies.
 segno==1.6.6
+# Passkeys as a second factor (WebAuthn): checks registrations and sign-ins. Pins its own dependencies below.
+webauthn==3.0.1
+cbor2==6.1.5
+pyasn1==0.6.4
+pyasn1-modules==0.4.2
+pyOpenSSL==26.4.0

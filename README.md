@@ -47,9 +47,13 @@ is at [nextrmnl.nexapps.dev](https://nextrmnl.nexapps.dev).
   Ctrl+V, Ctrl+Shift+V, Shift+Insert or a right click. Several lines are shown before they run.
 - **Accounts**: the first account is the operator, others come by invitation link or through OpenID Connect.
   Connections can be shared; sharing passes name, address and settings, never access.
-- **Second factor**: a code from an authenticator app on top of the password (TOTP), with recovery codes for
-  the day the phone is gone. The operator can require it for every password account; whoever locks themselves
-  out gets it reset by the operator.
+- **Second factor**: a code from an authenticator app on top of the password (TOTP), a **passkey** or a security
+  key such as a YubiKey (WebAuthn, on HTTPS), with recovery codes for the day the phone or the key is gone. The
+  operator can require it for every password account; whoever locks themselves out gets it reset by the operator.
+- **Guest accounts and shares with an end**: an invitation can make an account that ends on a day, and a share
+  can end on a day too. Then sign-in, connection and open terminals end with it.
+- **Notifications** to [nexsift](https://github.com/DerKezorm/nexsift), Gotify, ntfy or a webhook: locked
+  accounts, changed host keys, sign-ins, opened sessions, failed backups, each group on or off. Off by default.
 - **A vault per account** for private keys and stored passwords, encrypted with a key that only the account's
   password unwraps. Not the operator, not a backup, not a database dump can read it. Generate Ed25519 or RSA
   keys, or paste existing ones. Download the vault as an encrypted file and restore it, here or on another nextrmnl.
@@ -135,6 +139,10 @@ open with the account's password only. Both go into the backup archive.
 - A shell waiting for its browser can only be taken back by the account that opened it, not even by the operator.
   Its last screen (at most 256 KB) stays in the server's memory only, never on disk, in the log or in a backup, and
   is gone with the session. Signing out ends waiting shells too.
+- A passkey is a second factor, never a replacement for the password: the vault opens with the password alone.
+  Only the public key is stored; a key whose counter goes backwards (a copy) is refused.
+- Notifications are another way out and closed until the operator opens them. Their token is stored encrypted and
+  never shown again; redirects are not followed; a message never carries terminal content, passwords or keys.
 - A direct link never opens a shell by itself: it shows the connection and waits for a click, and only to an
   account that sees that connection. Commands are text without control characters, so a stored command cannot
   smuggle in a Ctrl+C or an escape sequence.

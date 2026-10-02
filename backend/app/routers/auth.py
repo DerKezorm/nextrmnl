@@ -24,7 +24,7 @@ from ..deps import (
 from ..meldungen import fehler, meldung
 from ..models import ROLES, SIGN_IN_PASSWORD, Account
 from ..security import MIN_PASSWORD, SESSION_COOKIE, brake, end_all_sessions, end_session, start_session
-from ..services import accounts, settings_service, totp, vault
+from ..services import accounts, passkeys, settings_service, totp, vault
 from ..services.accounts import AccountError
 
 logger = logging.getLogger("nextrmnl.auth")
@@ -121,8 +121,13 @@ def account_view(db: DbSession, account: Account) -> dict[str, Any]:
         "role": account.role,
         "sign_in": account.sign_in,
         "email": account.email,
-        "two_factor": bool(account.totp_secret_enc),
-        "two_factor_recovery_left": len(totp.load_recovery(account.totp_recovery)) if account.totp_secret_enc else 0,
+        "two_factor": totp.has_second_factor(db, account),
+        #: Which kinds: the app and the number of passkeys.
+        "totp": bool(account.totp_secret_enc),
+        "passkeys": passkeys.count(db, account.id),
+        "two_factor_recovery_left": len(totp.load_recovery(account.totp_recovery))
+        if totp.has_second_factor(db, account)
+        else 0,
         "second_factor_setup_required": totp.setup_required(db, account),
         "oidc_linked": bool(account.oidc_subject),
         "vault": "unset" if not account.vault_ready else ("open" if vault.is_open(account.id) else "locked"),
@@ -179,7 +184,7 @@ def login(payload: LoginIn, request: Request, response: Response, db: DbSession)
     if not settings_service.get(db, "password_login") and account.role != "operator":
         # The operator keeps the password as the emergency exit even when password sign-in is off.
         raise fehler("password_login_off", "Sign-in with a password is turned off.", 403)
-    if account.totp_secret_enc:
+    if totp.has_second_factor(db, account):
         # Nothing opens yet. The vault key is unwrapped now, while the password is at hand, and parked until the
         # code step; the browser gets a short-lived cookie that names the parked sign-in and nothing else.
         vault_key: bytes | None = None
@@ -190,7 +195,7 @@ def login(payload: LoginIn, request: Request, response: Response, db: DbSession)
                 vault_key = None
         _set_pending_cookie(response, request, totp.start_pending(account.id, vault_key))
         logger.info("Password accepted, second factor pending account=%s", account.name)
-        return {"second_factor": True}
+        return {"second_factor": True, "methods": totp.methods(db, account)}
     accounts.note_success(db, account)
     # The password was just given, so the vault opens along with the session.
     if account.vault_ready:

@@ -73,7 +73,8 @@ def enrol(client: TestClient) -> tuple[str, list[str]]:
 def password_step(client: TestClient, name: str = "admin") -> None:
     response = client.post("/api/auth/login", json={"name": name, "password": PASSWORD}, headers=UI)
     assert response.status_code == 200, response.text
-    assert response.json() == {"second_factor": True}
+    # Only the fact and the ways offered; nothing about the account itself before the second step.
+    assert response.json() == {"second_factor": True, "methods": ["totp", "recovery"]}
     cookie = response.headers.get("set-cookie", "")
     assert "nextrmnl_2fa=" in cookie and "HttpOnly" in cookie and "Path=/api/auth" in cookie
 

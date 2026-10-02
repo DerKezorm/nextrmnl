@@ -13,7 +13,7 @@ const CATEGORIES: NotifyCategory[] = ['security', 'signin', 'sessions', 'operati
  * Address, kind and token are saved together with the button; the token is never shown again, only whether one is
  * stored.
  */
-export function NotificationsSection({ data, onSave }: { data: Settings; onSave: (values: Partial<Settings> & { notify_token?: string }) => Promise<void> }) {
+export function NotificationsSection({ data, onSave }: { data: Settings; onSave: (values: Partial<Settings> & { notify_token?: string }) => Promise<boolean> }) {
   const { t } = useTranslation()
   const notify = useNotice()
   const [kind, setKind] = useState<NotifyKind>(data.notify_kind)
@@ -21,6 +21,8 @@ export function NotificationsSection({ data, onSave }: { data: Settings; onSave:
   const [token, setToken] = useState('')
   const [busy, setBusy] = useState(false)
   const [testing, setTesting] = useState(false)
+  // Ticked at once; the server's answer follows. On a refusal the boxes go back to what the server has.
+  const [events, setEvents] = useState<NotifyCategory[]>(data.notify_events)
   const dirty = kind !== data.notify_kind || url.trim() !== data.notify_url || token !== ''
 
   async function saveTarget() {
@@ -46,8 +48,11 @@ export function NotificationsSection({ data, onSave }: { data: Settings; onSave:
   }
 
   const toggleCategory = (category: NotifyCategory, on: boolean) => {
-    const next = on ? [...data.notify_events, category] : data.notify_events.filter((c) => c !== category)
-    void onSave({ notify_events: CATEGORIES.filter((c) => next.includes(c)) })
+    const next = CATEGORIES.filter((c) => (c === category ? on : events.includes(c)))
+    setEvents(next)
+    void onSave({ notify_events: next }).then((saved) => {
+      if (!saved) setEvents(data.notify_events)
+    })
   }
 
   return (
@@ -105,7 +110,7 @@ export function NotificationsSection({ data, onSave }: { data: Settings; onSave:
               <input
                 type="checkbox"
                 className="mt-0.5 accent-accent-500"
-                checked={data.notify_events.includes(category)}
+                checked={events.includes(category)}
                 onChange={(event) => toggleCategory(category, event.target.checked)}
               />
               <span>

@@ -6,6 +6,7 @@ import type { Account, RecoveryCodes, TotpEnrolment } from '../../api/types'
 import { useAuth } from '../../auth'
 import { Dialog } from '../../components/Dialog'
 import { useNotice } from '../../components/Notice'
+import { PasskeysPart } from './Passkeys'
 import { Symbol } from '../../components/Symbol'
 import { Banner, Button, Field, Section } from '../../components/ui'
 import { writeClipboard } from '../../lib/clipboard'
@@ -101,23 +102,34 @@ export function SecondFactorSection({ account, oidcOnly, provider }: { account: 
       {!oidcOnly && (
         <div className="flex flex-wrap items-center gap-3">
           <p className="text-sm text-mist-300">{account.two_factor ? t('twofactor.on', { count: account.two_factor_recovery_left }) : t('twofactor.off')}</p>
-          {account.two_factor ? (
-            <>
-              <Button variant="ghost" size="sm" onClick={() => setAsking('renew')}>
-                {t('twofactor.newCodes')}
-              </Button>
-              <Button variant="ghost" size="sm" onClick={() => setAsking('disable')}>
-                {t('twofactor.disable')}
-              </Button>
-            </>
-          ) : (
-            <Button size="sm" loading={busy && enrolment === null} onClick={() => void begin()}>
-              <Symbol name="shield" className="h-3.5 w-3.5" />
-              {t('twofactor.enable')}
+          {account.two_factor && (
+            <Button variant="ghost" size="sm" onClick={() => setAsking('renew')}>
+              {t('twofactor.newCodes')}
             </Button>
           )}
         </div>
       )}
+      {!oidcOnly && (
+        <div className="flex flex-col gap-3 border-t border-ink-700 pt-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-medium text-mist-100">{t('twofactor.appTitle')}</p>
+              <p className="text-xs text-mist-500">{account.totp ? t('twofactor.appOn') : t('twofactor.appOff')}</p>
+            </div>
+            {account.totp ? (
+              <Button variant="ghost" size="sm" onClick={() => setAsking('disable')}>
+                {t('twofactor.disable')}
+              </Button>
+            ) : (
+              <Button size="sm" variant={account.two_factor ? 'ghost' : 'primary'} loading={busy && enrolment === null} onClick={() => void begin()}>
+                <Symbol name="shield" className="h-3.5 w-3.5" />
+                {t('twofactor.enable')}
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
+      {!oidcOnly && <PasskeysPart onCodes={setCodes} />}
       {account.two_factor && account.two_factor_recovery_left < LOW_CODES && <Banner tone="warn">{t('twofactor.lowCodes')}</Banner>}
 
       <Dialog

@@ -952,13 +952,16 @@ function SecuritySettings() {
   const settings = useLoad(() => api.get<Settings>('/api/settings'))
   const [error, setError] = useState<string | null>(null)
 
-  async function save(values: Partial<Settings> & { notify_token?: string }) {
+  /** True when the server took it; the caller may undo what it showed early. */
+  async function save(values: Partial<Settings> & { notify_token?: string }): Promise<boolean> {
     setError(null)
     try {
       settings.set(await api.put<Settings>('/api/settings', values))
+      return true
     } catch (caught) {
       setError(errorMessage(caught))
       notify(errorMessage(caught))
+      return false
     }
   }
 

@@ -25,7 +25,16 @@ DbSession = Annotated[Session, Depends(get_db)]
 UNSAFE = {"POST", "PUT", "PATCH", "DELETE"}
 #: What an account may still call while the operator requires a second factor it has not set up: seeing itself,
 #: enrolling, leaving.
-SETUP_ONLY_PATHS = {"/api/auth/me", "/api/auth/logout", "/api/auth/totp/begin", "/api/auth/totp/confirm"}
+SETUP_ONLY_PATHS = {
+    "/api/auth/me",
+    "/api/auth/logout",
+    "/api/auth/totp/begin",
+    "/api/auth/totp/confirm",
+    # A passkey is a second factor too; the required mode must let an account set one up.
+    "/api/auth/passkeys",
+    "/api/auth/passkeys/begin",
+    "/api/auth/passkeys/finish",
+}
 
 
 @lru_cache(maxsize=4)

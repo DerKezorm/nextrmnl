@@ -8,11 +8,12 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import type { ReactNode } from 'react'
 
 import { ApiError, api, setSignedOutHandler } from './api/client'
-import type { Account, SecondFactorPending, SetupState, VaultState } from './api/types'
+import type { Account, SecondFactorMethod, SecondFactorPending, SetupState, VaultState } from './api/types'
+import { answerWithPasskey } from './lib/webauthn'
 
 export type AuthState = 'loading' | 'setup' | 'signed_out' | 'signed_in' | 'unreachable'
-/** What the password step ends with: signed in, or a second step with a code from the app. */
-export type SignInOutcome = 'signed_in' | 'second_factor'
+/** What the password step ends with: signed in, or a second step with the ways it offers. */
+export type SignInOutcome = { done: true } | { done: false; methods: SecondFactorMethod[] }
 
 type Auth = {
   state: AuthState
@@ -21,6 +22,8 @@ type Auth = {
   setup: (name: string, password: string) => Promise<void>
   signIn: (name: string, password: string) => Promise<SignInOutcome>
   signInCode: (code: string) => Promise<void>
+  /** The second step with a passkey: the server's challenge, the browser's prompt, the signed answer. */
+  signInPasskey: () => Promise<void>
   cancelSecondFactor: () => Promise<void>
   acceptInvite: (token: string, name: string, password: string) => Promise<void>
   signOut: () => Promise<void>
@@ -88,11 +91,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setup: async (name, password) => signedIn(await api.post<Account>('/api/setup', { name, password })),
       signIn: async (name, password) => {
         const result = await api.post<Account | SecondFactorPending>('/api/auth/login', { name, password })
-        if ('second_factor' in result) return 'second_factor'
+        if ('second_factor' in result) return { done: false, methods: result.methods ?? ['totp', 'recovery'] }
         signedIn(result)
-        return 'signed_in'
+        return { done: true }
       },
       signInCode: async (code) => signedIn(await api.post<Account>('/api/auth/login/totp', { code })),
+      signInPasskey: async () => {
+        const begun = await api.post<{ options: string }>('/api/auth/login/passkey/begin')
+        const credential = await answerWithPasskey(begun.options)
+        signedIn(await api.post<Account>('/api/auth/login/passkey', { credential }))
+      },
       cancelSecondFactor: async () => {
         try {
           await api.post('/api/auth/login/totp/cancel')

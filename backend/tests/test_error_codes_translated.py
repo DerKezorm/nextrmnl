@@ -37,7 +37,8 @@ def _details() -> set[str]:
 
 
 def test_every_error_code_has_a_sentence() -> None:
-    codes = _codes(r'fehler\(\s*"([a-z0-9_]+)"') | _codes(r'AccountError\(\s*"([a-z0-9_]+)"')
+    # ``fehler`` itself and the services' own error classes, whose code the routers pass on unchanged.
+    codes = _codes(r'(?:fehler|AccountError|PasskeyError|NotifyError|KeyError_)\(\s*"([a-z0-9_]+)"')
     codes -= HANDLED_ELSEWHERE
     for language, texts in _languages().items():
         missing = sorted(code for code in codes if code not in texts["errors"]["byCode"])

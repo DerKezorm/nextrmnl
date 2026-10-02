@@ -25,7 +25,7 @@ from ..deps import (
 from ..meldungen import fehler, meldung
 from ..models import SIGN_IN_PASSWORD, Account
 from ..security import brake, end_all_sessions
-from ..services import accounts, notify, settings_service, totp, vault
+from ..services import accounts, notify, passkeys, settings_service, totp, vault
 from .auth import PENDING_COOKIE, account_view, end_ssh_sessions, sign_in_response
 
 logger = logging.getLogger("nextrmnl.auth")
@@ -101,14 +101,14 @@ def disable(payload: PasswordIn, request: Request, account: CurrentAccount, db: 
     if not account.totp_secret_enc:
         raise fehler("totp_not_enabled", "The second factor is not on.", 409)
     _check_password(request, db, account, payload.password)
-    _reset(db, account)
+    _reset(db, account, keep_recovery=passkeys.count(db, account.id) > 0)
     logger.info("Second factor disabled account=%s", account.name)
     return account_view(db, account)
 
 
 @router.post("/auth/totp/recovery", summary="New recovery codes; the old ones stop working")
 def new_recovery_codes(payload: PasswordIn, request: Request, account: CurrentAccount, db: DbSession) -> dict[str, Any]:
-    if not account.totp_secret_enc:
+    if not totp.has_second_factor(db, account):
         raise fehler("totp_not_enabled", "The second factor is not on.", 409)
     _check_password(request, db, account, payload.password)
     codes = totp.generate_recovery_codes()
@@ -118,9 +118,10 @@ def new_recovery_codes(payload: PasswordIn, request: Request, account: CurrentAc
     return {"recovery_codes": codes, "account": account_view(db, account)}
 
 
-def _reset(db: DbSession, account: Account) -> None:
+def _reset(db: DbSession, account: Account, keep_recovery: bool = False) -> None:
     account.totp_secret_enc = ""
-    account.totp_recovery = ""
+    if not keep_recovery:
+        account.totp_recovery = ""
     account.totp_last_step = 0
     db.commit()
     totp.forget_account(account.id)
@@ -133,9 +134,10 @@ def operator_reset(account_id: int, operator: OperatorAccount, db: DbSession) ->
     row = db.get(Account, account_id)
     if row is None:
         raise fehler("not_found", "Account not found.", 404)
-    if not row.totp_secret_enc:
+    if not totp.has_second_factor(db, row):
         raise fehler("totp_not_enabled", "The second factor is not on.", 409)
     _reset(db, row)
+    passkeys.remove_all(db, row.id)
     # A reset is what happens after a lost phone or a suspected intruder: whoever holds a session of that
     # account is thrown out with it, terminals included, and signs in afresh with the password alone.
     end_all_sessions(db, row.id)
@@ -166,7 +168,7 @@ def login_code(payload: CodeIn, request: Request, response: Response, db: DbSess
             headers={"Retry-After": str(wait)},
         )
     account = db.get(Account, pending.account_id)
-    if account is None or not account.totp_secret_enc:
+    if account is None or not totp.has_second_factor(db, account):
         totp.finish_pending(token)
         _clear_pending_cookie(response)
         raise fehler("second_factor_expired", "Start again with your password.", 401)
@@ -178,7 +180,10 @@ def login_code(payload: CodeIn, request: Request, response: Response, db: DbSess
 
     typed = totp.normalize_code(payload.code)
     used_recovery = False
-    if len(typed) == totp.DIGITS and typed.isdigit():
+    if len(typed) == totp.DIGITS and typed.isdigit() and not account.totp_secret_enc:
+        # Six digits but no app: there is nothing to check them against.
+        accepted = False
+    elif len(typed) == totp.DIGITS and typed.isdigit():
         try:
             seed = totp.open_seed(account.totp_secret_enc)
         except totp.SeedUnreadable:

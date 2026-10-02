@@ -219,6 +219,21 @@ class ConnectionShare(Base):
     start_command: Mapped[str] = mapped_column(String(255), default="")
 
 
+class Snippet(Base):
+    """A command an account keeps at hand. Only its owner sees it; it is text, not a secret, and goes into backups
+    like the connections do. Nothing runs it on its own: the browser types it into a terminal, Enter is the
+    person's."""
+
+    __tablename__ = "snippets"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(64))
+    command: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow)
+    last_used_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
+
+
 class HostKey(Base):
     """The host keys nextrmnl has been told to trust, like a known_hosts file for the whole installation."""
 

@@ -105,7 +105,10 @@ def history(account: KeyAccount, db: DbSession, limit: int = Query(default=20, g
 
 
 @router.get("/connections", summary="Each connection and whether its port answers, reused for a minute")
-async def connection_list(account: KeyAccount, db: DbSession) -> list[dict[str, Any]]:
+async def connection_list(account: KeyAccount, db: DbSession, request: Request) -> list[dict[str, Any]]:
+    """``link`` opens nextrmnl at the connection; it asks before connecting, and only shows it to an account that
+    sees the connection."""
+    base = settings_service.public_url(db) or str(request.base_url).rstrip("/")
     now = time.monotonic()
     cached = _reach_cache.get(account.id)
     if cached is None or now - cached[0] >= REACH_SECONDS:
@@ -120,6 +123,7 @@ async def connection_list(account: KeyAccount, db: DbSession) -> list[dict[str, 
             "target": f"{row.host}:{row.port}",
             "reach": reach.get(row.id, {}).get("reach", "unknown"),
             "latency_ms": reach.get(row.id, {}).get("latency_ms"),
+            "link": f"{base}/connect/{row.id}",
         }
         for row in rows
     ]

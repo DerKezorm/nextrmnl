@@ -363,7 +363,10 @@
     "search": "Search",
     "share": "Share",
     "sharedWithMe": "Shared with me",
-    "title": "Connections"
+    "title": "Connections",
+    "copyLink": "Copy link",
+    "linkCopied": "Link copied. Whoever opens it is asked before connecting.",
+    "linkFailed": "Copying did not work."
   },
   "logs": {
     "alwaysLead": "What is in it: start, end, account, target and result of every session, sign-ins, host key decisions, sharing, backups. For SFTP the path and the size, never the content.",
@@ -872,5 +875,94 @@
     "submit": "Create vault",
     "title": "Choose a vault password",
     "warning": "If you forget this password, nobody gets to the keys and passwords in the vault any more, not even the operator. Only an empty new vault remains."
+  },
+  "split": {
+    "title": "Split",
+    "single": "One terminal",
+    "columns": "Two side by side",
+    "rows": "Two above each other",
+    "grid": "Four",
+    "broadcast": "Type into all",
+    "broadcastOn": "Typing goes to {{count}} sessions",
+    "paneLabel": "Session in field {{number}}",
+    "emptyPane": "Empty field",
+    "emptyPaneHint": "Pick a session above or open a connection."
+  },
+  "snippets": {
+    "title": "Commands",
+    "search": "Search commands",
+    "new": "New command",
+    "toAll": "Type into all is on: the command goes into every field.",
+    "noTerminal": "Open a session first, then a command can go in.",
+    "name": "Name",
+    "command": "Command",
+    "commandHint": "It is typed in, not run. You press Enter yourself.",
+    "empty": "No commands yet. The plus adds one.",
+    "nothingFound": "Nothing found.",
+    "insert": "Type into the terminal",
+    "reallyDelete": "Really delete?",
+    "edit": "Edit",
+    "editNamed": "Edit {{name}}",
+    "delete": "Delete",
+    "deleteNamed": "Delete {{name}}"
+  },
+  "mobileKeys": {
+    "label": "Extra keys",
+    "ctrl": "Ctrl for the next key",
+    "ctrlShort": "Ctrl",
+    "left": "Arrow left",
+    "down": "Arrow down",
+    "up": "Arrow up",
+    "right": "Arrow right"
+  },
+  "import": {
+    "button": "Import",
+    "title": "Import connections",
+    "lead": "From the SSH configuration (~/.ssh/config) or from PuTTY. On Windows, PuTTY exports like this: reg export HKCU\\Software\\SimonTatham\\PuTTY\\Sessions putty.reg",
+    "file": "File",
+    "fileHint": "config or .reg, at most 2 MB",
+    "paste": "Or paste it here",
+    "secretsNote": "Name, address, user, port and jump host come over. Keys and passwords stay where they are.",
+    "read": "Read",
+    "nothing": "There is no connection in it that can be taken over.",
+    "tooLarge": "The file is larger than 2 MB.",
+    "foundSsh_one": "One connection from the SSH configuration.",
+    "foundSsh_other": "{{count}} connections from the SSH configuration.",
+    "foundPutty_one": "One session from PuTTY.",
+    "foundPutty_other": "{{count}} sessions from PuTTY.",
+    "exists": "already there",
+    "via": "via {{jump}}",
+    "skipped_one": "One left out:",
+    "skipped_other": "{{count}} left out:",
+    "reason": {
+      "pattern": "pattern",
+      "match": "Match block",
+      "include": "Include",
+      "invalid": "no valid address",
+      "protocol": "not SSH",
+      "no_host": "no address"
+    },
+    "note": {
+      "key_file": "key file not taken over",
+      "proxy_command": "ProxyCommand not taken over",
+      "jump_chain": "only the last hop"
+    },
+    "group": "Group",
+    "groupHint": "Leave empty for no group.",
+    "signIn": "Sign-in",
+    "signInAsk": "Ask when connecting",
+    "signInKey": "Key {{name}}",
+    "run_one": "Import one",
+    "run_other": "Import {{count}}",
+    "done_one": "One connection imported.",
+    "done_other": "{{count}} connections imported."
+  },
+  "connect": {
+    "title": "Connect to {{name}}?",
+    "lead": "You came here through a link. Nothing connects until you confirm.",
+    "go": "Connect",
+    "unknownTitle": "Connection not found",
+    "unknown": "This connection does not exist, or it is not shared with your account.",
+    "toWorkspace": "To the connections"
   }
 }

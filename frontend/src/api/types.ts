@@ -318,3 +318,12 @@ export interface AuthentikResult {
   client_id: string
   issuer: string
 }
+
+/** A command an account keeps at hand; only its owner sees it. */
+export interface Snippet {
+  id: number
+  name: string
+  command: string
+  created_at: string
+  last_used_at: string | null
+}

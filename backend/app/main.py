@@ -19,7 +19,7 @@ from .config import get_settings
 from .db import SessionLocal, init_db
 from .meldungen import meldung
 from .middleware import RequestContextMiddleware, unhandled_error
-from .routers import about, api_keys, auth, connections, health
+from .routers import about, api_keys, auth, connections, health, snippets
 from .routers import logs as logs_router
 from .routers import settings as settings_router
 from .routers import totp as totp_router
@@ -29,7 +29,9 @@ from .services import logs, settings_service, totp, vault
 
 logger = logging.getLogger("nextrmnl")
 
-ROUTERS = [health, auth, totp_router, vault_router, connections, settings_router, about, logs_router, api_keys]
+ROUTERS = [
+    health, auth, totp_router, vault_router, connections, snippets, settings_router, about, logs_router, api_keys
+]
 
 try:  # Optional parts, built separately. The app starts without them.
     from .routers import api_v1

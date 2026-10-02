@@ -363,7 +363,10 @@
     "search": "Suchen",
     "share": "Freigeben",
     "sharedWithMe": "Für mich freigegeben",
-    "title": "Verbindungen"
+    "title": "Verbindungen",
+    "copyLink": "Link kopieren",
+    "linkCopied": "Link kopiert. Wer ihn öffnet, wird vor dem Verbinden gefragt.",
+    "linkFailed": "Kopieren hat nicht geklappt."
   },
   "logs": {
     "alwaysLead": "Was drinsteht: Beginn, Ende, Konto, Ziel und Ergebnis jeder Sitzung, Anmeldungen, Entscheidungen zu Hostschlüsseln, Freigaben, Sicherungen. Bei SFTP der Pfad und die Größe, nie der Inhalt.",
@@ -872,5 +875,94 @@
     "submit": "Tresor anlegen",
     "title": "Tresor-Passwort festlegen",
     "warning": "Vergisst du dieses Passwort, kommt niemand mehr an Schlüssel und Passwörter im Tresor, auch der Betreiber nicht. Dann bleibt nur ein leerer neuer Tresor."
+  },
+  "split": {
+    "title": "Teilen",
+    "single": "Ein Terminal",
+    "columns": "Zwei nebeneinander",
+    "rows": "Zwei übereinander",
+    "grid": "Vier",
+    "broadcast": "Eingabe an alle",
+    "broadcastOn": "Tippen geht an {{count}} Sitzungen",
+    "paneLabel": "Sitzung in Feld {{number}}",
+    "emptyPane": "Leeres Feld",
+    "emptyPaneHint": "Oben eine Sitzung wählen oder eine Verbindung öffnen."
+  },
+  "snippets": {
+    "title": "Befehle",
+    "search": "Befehle durchsuchen",
+    "new": "Neuer Befehl",
+    "toAll": "Eingabe an alle ist an: Der Befehl geht in alle Felder.",
+    "noTerminal": "Erst eine Sitzung öffnen, dann lässt sich ein Befehl einfügen.",
+    "name": "Name",
+    "command": "Befehl",
+    "commandHint": "Wird eingefügt, nicht ausgeführt. Enter drückst du selbst.",
+    "empty": "Noch keine Befehle. Mit dem Plus legst du einen an.",
+    "nothingFound": "Nichts gefunden.",
+    "insert": "Ins Terminal einfügen",
+    "reallyDelete": "Wirklich löschen?",
+    "edit": "Bearbeiten",
+    "editNamed": "{{name}} bearbeiten",
+    "delete": "Löschen",
+    "deleteNamed": "{{name}} löschen"
+  },
+  "mobileKeys": {
+    "label": "Zusatztasten",
+    "ctrl": "Strg für die nächste Taste",
+    "ctrlShort": "Strg",
+    "left": "Pfeil links",
+    "down": "Pfeil runter",
+    "up": "Pfeil hoch",
+    "right": "Pfeil rechts"
+  },
+  "import": {
+    "button": "Importieren",
+    "title": "Verbindungen importieren",
+    "lead": "Aus der SSH-Konfiguration (~/.ssh/config) oder aus PuTTY. PuTTY exportiert unter Windows so: reg export HKCU\\Software\\SimonTatham\\PuTTY\\Sessions putty.reg",
+    "file": "Datei",
+    "fileHint": "config oder .reg, höchstens 2 MB",
+    "paste": "Oder hier einfügen",
+    "secretsNote": "Übernommen werden Name, Adresse, Benutzer, Port und Sprunghost. Schlüssel und Passwörter bleiben, wo sie sind.",
+    "read": "Lesen",
+    "nothing": "Darin steht keine Verbindung, die sich übernehmen lässt.",
+    "tooLarge": "Die Datei ist größer als 2 MB.",
+    "foundSsh_one": "Eine Verbindung aus der SSH-Konfiguration.",
+    "foundSsh_other": "{{count}} Verbindungen aus der SSH-Konfiguration.",
+    "foundPutty_one": "Eine Sitzung aus PuTTY.",
+    "foundPutty_other": "{{count}} Sitzungen aus PuTTY.",
+    "exists": "schon da",
+    "via": "über {{jump}}",
+    "skipped_one": "Eine ausgelassen:",
+    "skipped_other": "{{count}} ausgelassen:",
+    "reason": {
+      "pattern": "Muster",
+      "match": "Match-Block",
+      "include": "Include",
+      "invalid": "keine gültige Adresse",
+      "protocol": "kein SSH",
+      "no_host": "ohne Adresse"
+    },
+    "note": {
+      "key_file": "Schlüsseldatei nicht übernommen",
+      "proxy_command": "ProxyCommand nicht übernommen",
+      "jump_chain": "nur der letzte Sprung"
+    },
+    "group": "Gruppe",
+    "groupHint": "Leer lassen für keine Gruppe.",
+    "signIn": "Anmeldung",
+    "signInAsk": "Beim Verbinden fragen",
+    "signInKey": "Schlüssel {{name}}",
+    "run_one": "Eine importieren",
+    "run_other": "{{count}} importieren",
+    "done_one": "Eine Verbindung importiert.",
+    "done_other": "{{count}} Verbindungen importiert."
+  },
+  "connect": {
+    "title": "Mit {{name}} verbinden?",
+    "lead": "Du bist über einen Link hier. Verbunden wird erst, wenn du es bestätigst.",
+    "go": "Verbinden",
+    "unknownTitle": "Verbindung nicht gefunden",
+    "unknown": "Diese Verbindung gibt es nicht, oder sie ist für dein Konto nicht freigegeben.",
+    "toWorkspace": "Zu den Verbindungen"
   }
 }

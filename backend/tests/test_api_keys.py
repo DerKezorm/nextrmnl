@@ -117,8 +117,13 @@ def test_reachability_is_reused_for_a_minute(client: TestClient, operator: dict,
     outsider = TestClient(app, base_url="http://testserver")
     first = outsider.get("/api/v1/connections", headers=_bearer(key)).json()
     outsider.get("/api/v1/connections", headers=_bearer(key))
-    assert first == [{"name": "nas", "group": "", "target": "10.0.0.5:22", "reach": "up", "latency_ms": 3}]
+    link = f"http://testserver/connect/{made.json()['id']}"
+    assert first == [{"name": "nas", "group": "", "target": "10.0.0.5:22", "reach": "up", "latency_ms": 3, "link": link}]
     assert probes == ["10.0.0.5"], "the second dashboard refresh knocks at no host"
+    # The public address wins over the request's, as for invitation links.
+    client.put("/api/settings", json={"public_url": "https://ssh.example.com"}, headers=UI)
+    linked = outsider.get("/api/v1/connections", headers=_bearer(key)).json()
+    assert linked[0]["link"] == f"https://ssh.example.com/connect/{made.json()['id']}"
 
 
 def test_no_key_reaches_the_log(client: TestClient, operator: dict, caplog) -> None:

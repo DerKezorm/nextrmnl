@@ -30,6 +30,14 @@ is at [nextrmnl.nexapps.dev](https://nextrmnl.nexapps.dev).
   screen; after a short drop only what was missed is sent again. Another device of the same account can take it
   over. Closing the tab on purpose ends it at once, and the browser asks before leaving a page with an open shell,
   so Ctrl+W in nano does not cost the session.
+- **Split view**: two terminals side by side, above each other, or four; each field picks its session. **Type
+  into all** sends the keyboard to every field at once, with red frames as long as it is on.
+- **Commands** kept per account and typed into the terminal with a click, never run: Enter is yours.
+- **Import** from `~/.ssh/config` (hosts, users, ports, ProxyJump) or a PuTTY registry export. Keys and passwords
+  stay where they are.
+- **On a phone**: a key bar with Esc, Tab, Ctrl, Alt and the arrows, and nextrmnl installs as an app.
+- **Direct links** to a connection (`/connect/<id>`) for bookmarks and dashboards; opening one asks before it
+  connects.
 - **Search in the terminal** with Ctrl+Shift+F, all matches marked. **Color schemes** (Dracula, Nord, Solarized,
   Gruvbox, One Dark, Tokyo Night, or the nex colors that follow light and dark) and **any installed font**, Nerd
   Fonts included; changes apply to open terminals right away.
@@ -58,7 +66,8 @@ is at [nextrmnl.nexapps.dev](https://nextrmnl.nexapps.dev).
   error message, downloadable. Never with terminal content, keystrokes, passwords, keys or tokens.
 - **Read-only API keys** for dashboards such as [nexdeck](https://nexdeck.nexapps.dev): four endpoints under
   `/api/v1` (`status`, `sessions`, `history`, `connections`) with the key as `Authorization: Bearer`. Off by
-  default; the operator switches them on and creates them under Settings, Security.
+  default; the operator switches them on and creates them under Settings, Security. Each connection carries its
+  direct link.
 - German and English; another language is one JSON file.
 
 ## Start
@@ -126,6 +135,9 @@ open with the account's password only. Both go into the backup archive.
 - A shell waiting for its browser can only be taken back by the account that opened it, not even by the operator.
   Its last screen (at most 256 KB) stays in the server's memory only, never on disk, in the log or in a backup, and
   is gone with the session. Signing out ends waiting shells too.
+- A direct link never opens a shell by itself: it shows the connection and waits for a click, and only to an
+  account that sees that connection. Commands are text without control characters, so a stored command cannot
+  smuggle in a Ctrl+C or an escape sequence.
 - A member of a shared connection signs in with their own user, key or password, and only their own start
   command runs in their shell; a stored password stays with the host, port and user it was given for.
 - Responses carry a Content Security Policy, `X-Frame-Options: DENY` and friends.

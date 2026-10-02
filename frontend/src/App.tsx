@@ -5,6 +5,7 @@ import { useAuth } from './auth'
 import { AppShell } from './components/AppShell'
 import { Banner, Button, PageLoading } from './components/ui'
 import { AboutPage } from './pages/AboutPage'
+import { ConnectPage } from './pages/ConnectPage'
 import { InvitePage } from './pages/auth/InvitePage'
 import { LoginPage } from './pages/auth/LoginPage'
 import { SetupPage } from './pages/auth/SetupPage'
@@ -67,6 +68,7 @@ export default function App() {
           <Route path="vault" element={<VaultPage />} />
           <Route path="settings" element={<SettingsPage />} />
           <Route path="about" element={<AboutPage />} />
+          <Route path="connect/:id" element={<ConnectPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>

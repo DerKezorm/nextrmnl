@@ -9,7 +9,8 @@ import type { ReactNode } from 'react'
 import { api } from '../api/client'
 import type { Connection, ReachInfo, RunningSession } from '../api/types'
 import { useAuth } from '../auth'
-import { disposeTerminal, peekTerminal, type ConnectStatus, type PromptAnswer, type PromptData, type PromptKind, type Quick, type StatusInfo } from '../lib/terminalCache'
+import { arrange, isLayout, place, type Layout, type Panes } from '../lib/panes'
+import { disposeTerminal, peekTerminal, setBroadcast as setBroadcastGroup, type ConnectStatus, type PromptAnswer, type PromptData, type PromptKind, type Quick, type StatusInfo } from '../lib/terminalCache'
 import { quickFromLabel, shellsToResume, storedTabs, storeTabs } from '../lib/resume'
 import { terminalPrefs } from '../lib/terminalPrefs'
 
@@ -34,6 +35,8 @@ export type Prompt = { sessionId: string; kind: PromptKind; data: PromptData }
 interface WorkspaceValue {
   connections: Connection[]
   connectionsError: string | null
+  /** The first answer about the connections is in, successful or not. */
+  connectionsLoaded: boolean
   reloadConnections: () => Promise<void>
   reach: Record<number, ReachInfo>
   sessions: Session[]
@@ -54,12 +57,30 @@ interface WorkspaceValue {
   answerPrompt: (answer: PromptAnswer | null) => void
   listCollapsed: boolean
   setListCollapsed: (collapsed: boolean) => void
+  /** The split view: how many fields, and which session shows in which. `single` is the plain terminal. */
+  layout: Layout
+  setLayout: (layout: Layout) => void
+  panes: Panes
+  showInPane: (index: number, sessionId: string | null) => void
+  /** Typing goes to every field of the split view at once. Only in the split view; leaving it turns it off. */
+  broadcast: boolean
+  setBroadcast: (on: boolean) => void
 }
 
 const WorkspaceContext = createContext<WorkspaceValue | null>(null)
 
 let sessionCounter = 0
 const PINNED_KEY = 'nextrmnl.listPinned'
+const LAYOUT_KEY = 'nextrmnl.layout'
+
+function storedLayout(): Layout {
+  try {
+    const value = localStorage.getItem(LAYOUT_KEY)
+    return isLayout(value) ? value : 'single'
+  } catch {
+    return 'single'
+  }
+}
 
 function newSession(connectionId: number | null, quick: Quick | null, name: string, resumeId: string | null = null): Session {
   sessionCounter += 1
@@ -98,11 +119,17 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const { account, refresh } = useAuth()
   const [connections, setConnections] = useState<Connection[]>([])
   const [connectionsError, setConnectionsError] = useState<string | null>(null)
+  const [connectionsLoaded, setConnectionsLoaded] = useState(false)
   const [reach, setReach] = useState<Record<number, ReachInfo>>({})
   const [sessions, setSessions] = useState<Session[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
   const [prompt, setPrompt] = useState<Prompt | null>(null)
   const [listCollapsed, setCollapsedState] = useState(() => !storedPinned())
+  const [layout, setLayoutState] = useState<Layout>(storedLayout)
+  const [panes, setPanes] = useState<Panes>([])
+  const [broadcast, setBroadcastState] = useState(false)
+  // The field the last active session showed in; a newly active one replaces it when no field is free.
+  const focusRef = useRef(0)
   const connectionsRef = useRef(connections)
   connectionsRef.current = connections
 
@@ -121,6 +148,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       setConnectionsError(null)
     } catch (error) {
       setConnectionsError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setConnectionsLoaded(true)
     }
   }, [])
 
@@ -193,6 +222,44 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     window.addEventListener('beforeunload', onLeave)
     return () => window.removeEventListener('beforeunload', onLeave)
   }, [sessions])
+
+  // The fields follow the sessions: closed ones leave, new ones fill free fields, the active one always shows.
+  useEffect(() => {
+    setPanes((current) => {
+      const next = arrange(layout, current, sessions.map((s) => s.id), activeId, focusRef.current)
+      return next.length === current.length && next.every((id, index) => id === current[index]) ? current : next
+    })
+  }, [layout, sessions, activeId])
+
+  useEffect(() => {
+    const index = activeId === null ? -1 : panes.indexOf(activeId)
+    if (index >= 0) focusRef.current = index
+  }, [activeId, panes])
+
+  // Typing into all fields only while there are at least two sessions to type into.
+  const shown = panes.filter((id): id is string => id !== null)
+  const broadcastOn = broadcast && layout !== 'single' && shown.length > 1
+  const broadcastKey = broadcastOn ? shown.join(',') : ''
+  useEffect(() => {
+    setBroadcastGroup(broadcastKey ? broadcastKey.split(',') : [])
+  }, [broadcastKey])
+  useEffect(() => () => setBroadcastGroup([]), [])
+
+  const setLayout = useCallback((next: Layout) => {
+    setLayoutState(next)
+    if (next === 'single') setBroadcastState(false)
+    try {
+      localStorage.setItem(LAYOUT_KEY, next)
+    } catch {
+      // Then the layout only holds until the next reload.
+    }
+  }, [])
+
+  const showInPane = useCallback((index: number, sessionId: string | null) => {
+    setPanes((current) => place(current, index, sessionId))
+    focusRef.current = index
+    if (sessionId) setActiveId(sessionId)
+  }, [])
 
   const resume = useCallback(
     (running: RunningSession) => {
@@ -304,6 +371,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     () => ({
       connections,
       connectionsError,
+      connectionsLoaded,
       reloadConnections,
       reach,
       sessions,
@@ -320,8 +388,14 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       answerPrompt,
       listCollapsed,
       setListCollapsed,
+      layout,
+      setLayout,
+      panes,
+      showInPane,
+      broadcast: broadcastOn,
+      setBroadcast: setBroadcastState,
     }),
-    [connections, connectionsError, reloadConnections, reach, sessions, activeId, openConnection, openQuick, resume, closeSession, toggleFiles, reportStatus, showPrompt, prompt, answerPrompt, listCollapsed, setListCollapsed],
+    [connections, connectionsError, connectionsLoaded, reloadConnections, reach, sessions, activeId, openConnection, openQuick, resume, closeSession, toggleFiles, reportStatus, showPrompt, prompt, answerPrompt, listCollapsed, setListCollapsed, layout, setLayout, panes, showInPane, broadcastOn],
   )
 
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>

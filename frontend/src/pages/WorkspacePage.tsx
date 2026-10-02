@@ -7,7 +7,9 @@ import { ConnectionList } from '../components/workspace/ConnectionList'
 import { EmptyWorkspace } from '../components/workspace/EmptyWorkspace'
 import { FilePanel } from '../components/workspace/FilePanel'
 import { PromptDialogs } from '../components/workspace/PromptDialogs'
+import { MobileKeys } from '../components/workspace/MobileKeys'
 import { SessionTabs } from '../components/workspace/SessionTabs'
+import { SplitView } from '../components/workspace/SplitView'
 import { TerminalHost } from '../components/workspace/TerminalHost'
 import { peekTerminal } from '../lib/terminalCache'
 import { useWorkspace } from '../state/workspace'
@@ -32,7 +34,7 @@ function useWide(): boolean {
  * terminal as a card on the right. Collapsed, the list floats over the terminal.
  */
 export function WorkspacePage() {
-  const { sessions, activeId, listCollapsed } = useWorkspace()
+  const { sessions, activeId, listCollapsed, layout } = useWorkspace()
   const wide = useWide()
   const docked = wide && !listCollapsed
   // undefined: no dialog, connection null: new connection.
@@ -45,7 +47,15 @@ export function WorkspacePage() {
   const active = sessions.find((s) => s.id === activeId)
 
   useEffect(() => {
-    const onChange = () => setFullscreen(document.fullscreenElement === cardRef.current)
+    const onChange = () => {
+      const on = document.fullscreenElement === cardRef.current
+      setFullscreen(on)
+      // In full screen the browser lets a page keep Ctrl+W, Ctrl+T and Ctrl+N (Chromium, HTTPS or localhost):
+      // then they reach nano and friends instead of closing the tab. Escape held down still leaves full screen.
+      const keyboard = (navigator as Navigator & { keyboard?: { lock?: (codes: string[]) => Promise<void>; unlock?: () => void } }).keyboard
+      if (on) void keyboard?.lock?.(['KeyW', 'KeyT', 'KeyN']).catch(() => undefined)
+      else keyboard?.unlock?.()
+    }
     document.addEventListener('fullscreenchange', onChange)
     return () => document.removeEventListener('fullscreenchange', onChange)
   }, [])
@@ -61,7 +71,8 @@ export function WorkspacePage() {
   }
 
   return (
-    <div className="flex min-h-0 flex-1 gap-4">
+    // min-w-0: without it the card grows to the terminal's first width (80 columns) and a phone cuts it off.
+    <div className="flex min-h-0 min-w-0 flex-1 gap-4">
       {docked && <ConnectionList onEdit={edit} onNew={create} />}
 
       <section ref={cardRef} className={'relative flex min-w-0 flex-1 flex-col overflow-hidden ' + (fullscreen ? 'bg-ink-950' : CARD)}>
@@ -80,9 +91,13 @@ export function WorkspacePage() {
         ) : (
           <div className="flex min-h-0 flex-1">
             <div className={'min-w-0 flex-1 flex-col ' + (active?.filesOpen ? 'hidden md:flex' : 'flex')}>
-              {sessions.map((session) => (
-                <TerminalHost key={session.id} session={session} visible={session.id === activeId} />
-              ))}
+              {/* The split view needs room; on a narrow screen there is always one terminal. */}
+              {wide && layout !== 'single' ? (
+                <SplitView />
+              ) : (
+                sessions.map((session) => <TerminalHost key={session.id} session={session} visible={session.id === activeId} />)
+              )}
+              {active && <MobileKeys sessionId={active.id} />}
             </div>
             {active?.filesOpen && active.serverId && <FilePanel key={active.id} session={active} />}
           </div>

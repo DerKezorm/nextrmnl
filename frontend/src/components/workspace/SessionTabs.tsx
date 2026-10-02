@@ -1,7 +1,86 @@
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { LAYOUTS, type Layout } from '../../lib/panes'
 import { useWorkspace, type Session } from '../../state/workspace'
+import { Popover } from '../Popover'
 import { Symbol } from '../Symbol'
+import { SnippetsMenu } from './SnippetsMenu'
+
+const LAYOUT_SYMBOL = { single: 'layoutSingle', columns: 'layoutColumns', rows: 'layoutRows', grid: 'layoutGrid' } as const
+
+/** The split view: one terminal, two side by side, two above each other, or four. */
+function LayoutMenu() {
+  const { t } = useTranslation()
+  const { layout, setLayout } = useWorkspace()
+  const [anchor, setAnchor] = useState<DOMRect | null>(null)
+  const pick = (next: Layout) => {
+    setLayout(next)
+    setAnchor(null)
+  }
+  return (
+    <>
+      <button
+        type="button"
+        data-popover-toggle
+        aria-expanded={anchor !== null}
+        aria-haspopup="dialog"
+        onClick={(event) => setAnchor(anchor ? null : event.currentTarget.getBoundingClientRect())}
+        className={
+          'hidden items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-colors md:inline-flex ' +
+          (anchor || layout !== 'single' ? 'bg-accent-500/15 text-accent-400' : 'text-mist-400 hover:bg-ink-800 hover:text-mist-100')
+        }
+        title={t('split.title')}
+      >
+        <Symbol name={LAYOUT_SYMBOL[layout]} />
+        <span className="hidden xl:inline">{t('split.title')}</span>
+      </button>
+      {anchor && (
+        <Popover anchor={anchor} width={232} label={t('split.title')} onClose={() => setAnchor(null)}>
+          <div className="flex flex-col p-1" role="radiogroup" aria-label={t('split.title')}>
+            {LAYOUTS.map((option) => (
+              <button
+                key={option}
+                type="button"
+                role="radio"
+                aria-checked={layout === option}
+                onClick={() => pick(option)}
+                className={'flex items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm ' + (layout === option ? 'bg-accent-500/12 text-accent-400' : 'text-mist-200 hover:bg-ink-800')}
+              >
+                <Symbol name={LAYOUT_SYMBOL[option]} className="h-5 w-5" />
+                {t(`split.${option}`)}
+              </button>
+            ))}
+          </div>
+        </Popover>
+      )}
+    </>
+  )
+}
+
+/** Typing into every field at once. Red, because a command meant for one machine then runs on all of them. */
+function BroadcastSwitch() {
+  const { t } = useTranslation()
+  const { layout, broadcast, setBroadcast, panes } = useWorkspace()
+  const count = panes.filter(Boolean).length
+  if (layout === 'single' || count < 2) return null
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={broadcast}
+      onClick={() => setBroadcast(!broadcast)}
+      className={
+        'hidden items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-colors md:inline-flex ' +
+        (broadcast ? 'bg-bad-500 text-white hover:bg-bad-500/90' : 'text-mist-400 hover:bg-ink-800 hover:text-mist-100')
+      }
+      title={broadcast ? t('split.broadcastOn', { count }) : t('split.broadcast')}
+    >
+      <Symbol name="broadcast" />
+      <span className="hidden lg:inline">{broadcast ? t('split.broadcastOn', { count }) : t('split.broadcast')}</span>
+    </button>
+  )
+}
 
 function StatusDot({ session }: { session: Session }) {
   const tone = {
@@ -89,6 +168,9 @@ export function SessionTabs({
 
       {active && (
         <div className="flex shrink-0 items-center gap-1">
+          <LayoutMenu />
+          <BroadcastSwitch />
+          <SnippetsMenu />
           <button
             type="button"
             onClick={() => toggleFiles(active.id)}

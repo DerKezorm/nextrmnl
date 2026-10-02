@@ -9,6 +9,8 @@ import { Dialog } from '../Dialog'
 import { useNotice } from '../Notice'
 import { Symbol } from '../Symbol'
 import { Banner, Button } from '../ui'
+import { writeClipboard } from '../../lib/clipboard'
+import { ImportDialog } from './ImportDialog'
 
 function ReachDot({ reach }: { reach: Reach }) {
   const { t } = useTranslation()
@@ -18,7 +20,7 @@ function ReachDot({ reach }: { reach: Reach }) {
 }
 
 const MENU_WIDTH = 208
-const MENU_HEIGHT = 168
+const MENU_HEIGHT = 208
 
 /**
  * The menu for a row. It is attached to `body`, not inside the list: the list clips anything that
@@ -27,6 +29,7 @@ const MENU_HEIGHT = 168
 function RowMenu({ connection, anchor, onEdit, onRemove, onClose }: { connection: Connection; anchor: DOMRect; onEdit: (share?: boolean) => void; onRemove: () => void; onClose: () => void }) {
   const { t } = useTranslation()
   const { openConnection } = useWorkspace()
+  const notify = useNotice()
   const ref = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -65,6 +68,19 @@ function RowMenu({ connection, anchor, onEdit, onRemove, onClose }: { connection
       <button type="button" role="menuitem" className={item} onClick={() => { openConnection(connection.id); onClose() }}>
         <Symbol name="terminal" className="h-4 w-4 text-mist-500" />
         {t('list.connect')}
+      </button>
+      <button
+        type="button"
+        role="menuitem"
+        className={item}
+        onClick={() => {
+          // A link for a bookmark or a dashboard. Opening it asks before connecting.
+          void writeClipboard(`${window.location.origin}/connect/${connection.id}`).then((ok) => notify(ok ? t('list.linkCopied') : t('list.linkFailed')))
+          onClose()
+        }}
+      >
+        <Symbol name="link" className="h-4 w-4 text-mist-500" />
+        {t('list.copyLink')}
       </button>
       <button type="button" role="menuitem" className={item} onClick={() => { onEdit(); onClose() }}>
         <Symbol name={own ? 'pencil' : 'info'} className="h-4 w-4 text-mist-500" />
@@ -112,6 +128,7 @@ export function ConnectionList({
   const [menuFor, setMenuFor] = useState<{ id: number; anchor: DOMRect } | null>(null)
   const [removing, setRemoving] = useState<Connection | null>(null)
   const [busy, setBusy] = useState(false)
+  const [importing, setImporting] = useState(false)
 
   const activeConnection = sessions.find((s) => s.id === activeId)?.connectionId
   const openConnections = new Set(sessions.filter((s) => s.status === 'open' || s.status === 'connecting').map((s) => s.connectionId))
@@ -277,7 +294,14 @@ export function ConnectionList({
         })}
       </div>
 
-      <div className="border-t border-ink-700 px-3 py-2 text-[11px] text-mist-600">{t('list.footer', { count: connections.length })}</div>
+      <div className="flex items-center justify-between gap-2 border-t border-ink-700 px-3 py-1.5 text-[11px] text-mist-600">
+        <span>{t('list.footer', { count: connections.length })}</span>
+        <button type="button" onClick={() => setImporting(true)} className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-mist-500 hover:bg-ink-800 hover:text-mist-100">
+          <Symbol name="import" className="h-3.5 w-3.5" />
+          {t('import.button')}
+        </button>
+      </div>
+      {importing && <ImportDialog onClose={() => setImporting(false)} />}
 
       <Dialog
         open={removing !== null}

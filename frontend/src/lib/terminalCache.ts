@@ -130,6 +130,60 @@ interface Entry {
 
 const cache = new Map<string, Entry>()
 
+/** Sessions whose keyboard input goes to all of them ("type into all"). Empty: each terminal types for itself. */
+let broadcastGroup: string[] = []
+/** A modifier pressed on the on-screen key bar, applied to the next key typed in that terminal. */
+const armed = new Map<string, 'ctrl' | 'alt'>()
+export const MODIFIER_EVENT = 'nextrmnl-modifier'
+export type ModifierDetail = { sessionId: string; modifier: 'ctrl' | 'alt' | null }
+
+export function setBroadcast(sessionIds: string[]): void {
+  broadcastGroup = sessionIds.length > 1 ? [...sessionIds] : []
+}
+
+/** Ctrl or Alt for the next key, from the on-screen key bar; pressing the same again lets go. */
+export function armModifier(sessionId: string, modifier: 'ctrl' | 'alt'): void {
+  const next = armed.get(sessionId) === modifier ? null : modifier
+  if (next) armed.set(sessionId, next)
+  else armed.delete(sessionId)
+  emit<ModifierDetail>(MODIFIER_EVENT, { sessionId, modifier: next })
+}
+
+/** Ctrl turns a letter into its control character (Ctrl+C is 0x03), Alt puts Escape in front, as terminals do. */
+export function applyModifier(modifier: 'ctrl' | 'alt', data: string): string {
+  if (modifier === 'alt') return '\x1b' + data
+  if (data.length !== 1) return data
+  const code = data.toUpperCase().charCodeAt(0)
+  if (code >= 0x40 && code <= 0x5f) return String.fromCharCode(code - 0x40)
+  if (data === ' ') return '\x00'
+  if (data === '?') return '\x7f'
+  return data
+}
+
+/** Types a key sequence as if from the keyboard: through broadcast and an armed modifier like any key. */
+export function typeInto(sessionId: string, data: string): void {
+  const entry = cache.get(sessionId)
+  if (!entry) return
+  entry.term.input(data, true)
+  entry.term.focus()
+}
+
+/** An arrow key as the program in the terminal expects it: `ESC O A` in application mode (vim, less), else `ESC [ A`. */
+export function arrowKey(sessionId: string, direction: 'up' | 'down' | 'right' | 'left'): void {
+  const entry = cache.get(sessionId)
+  if (!entry) return
+  const letter = { up: 'A', down: 'B', right: 'C', left: 'D' }[direction]
+  typeInto(sessionId, (entry.term.modes.applicationCursorKeysMode ? '\x1bO' : '\x1b[') + letter)
+}
+
+/** Puts a text into the terminal like a paste, without running it: a single trailing line break goes. */
+export function insertText(sessionId: string, text: string): void {
+  const entry = cache.get(sessionId)
+  if (!entry) return
+  entry.term.paste(pastedLines(text).length > 1 ? text : text.replace(/(\r\n|\r|\n)$/, ''))
+  entry.term.focus()
+}
+
 const DIM = '\x1b[90m'
 const RED = '\x1b[31m'
 const RESET = '\x1b[0m'
@@ -466,8 +520,22 @@ export function getTerminal(sessionId: string, target: Target, texts: TerminalTe
     })
   })
 
-  term.onData((data) => {
-    if (entry.status === 'open' && entry.socket?.readyState === WebSocket.OPEN) entry.socket.send(encoder.encode(data))
+  term.onData((raw) => {
+    const modifier = armed.get(sessionId)
+    let data = raw
+    if (modifier) {
+      armed.delete(sessionId)
+      emit<ModifierDetail>(MODIFIER_EVENT, { sessionId, modifier: null })
+      data = applyModifier(modifier, raw)
+    }
+    if (entry.status === 'open' && broadcastGroup.includes(sessionId)) {
+      // Typing into all: the same bytes to every open session of the group, this one included.
+      const bytes = encoder.encode(data)
+      for (const id of broadcastGroup) {
+        const other = cache.get(id)
+        if (other?.status === 'open' && other.socket?.readyState === WebSocket.OPEN) other.socket.send(bytes)
+      }
+    } else if (entry.status === 'open' && entry.socket?.readyState === WebSocket.OPEN) entry.socket.send(encoder.encode(data))
     // Like PuTTY: after the end, Enter restarts the session. A shell still on the server is taken back instead.
     else if ((entry.status === 'closed' || entry.status === 'failed') && data === '\r') {
       if (entry.resumable && entry.serverId) {

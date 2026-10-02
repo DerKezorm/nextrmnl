@@ -7,6 +7,16 @@ type Path = { d: string; fill?: boolean }
 
 const SYMBOLS = {
   terminal: [{ d: 'M4 5.5h16a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-11a1 1 0 0 1 1-1Z' }, { d: 'M7 10l3 2.5L7 15M12.5 15H17' }],
+  // The four layouts of the split view, and the button that opens them.
+  layoutSingle: [{ d: 'M4 5h16v14H4z' }],
+  layoutColumns: [{ d: 'M4 5h16v14H4z' }, { d: 'M12 5v14' }],
+  layoutRows: [{ d: 'M4 5h16v14H4z' }, { d: 'M4 12h16' }],
+  layoutGrid: [{ d: 'M4 5h16v14H4z' }, { d: 'M12 5v14M4 12h16' }],
+  // One keyboard, several screens.
+  broadcast: [{ d: 'M12 13.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z' }, { d: 'M8.5 8.5a5 5 0 0 0 0 7M15.5 8.5a5 5 0 0 1 0 7M5.5 5.5a9 9 0 0 0 0 13M18.5 5.5a9 9 0 0 1 0 13' }],
+  command: [{ d: 'M5 6.5l4 4-4 4' }, { d: 'M11 17.5h8' }, { d: 'M14 6.5h5M14 10.5h5' }],
+  import: [{ d: 'M12 4v10M8 10.5l4 4 4-4' }, { d: 'M4.5 15.5v3h15v-3' }],
+  link: [{ d: 'M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1' }, { d: 'M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1' }],
   sessions: [{ d: 'M3.5 20h17' }, { d: 'M6 16V9M10 16V5M14 16v-4M18 16V8' }],
   vault: [{ d: 'M5 10.5h14a1 1 0 0 1 1 1V19a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-7.5a1 1 0 0 1 1-1Z' }, { d: 'M8 10.5V8a4 4 0 1 1 8 0v2.5' }, { d: 'M12 14.5v2' }],
   unlocked: [{ d: 'M5 10.5h14a1 1 0 0 1 1 1V19a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-7.5a1 1 0 0 1 1-1Z' }, { d: 'M8 10.5V8a4 4 0 0 1 7.7-1.5' }, { d: 'M12 14.5v2' }],

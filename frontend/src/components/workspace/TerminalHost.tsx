@@ -11,9 +11,9 @@ import { Symbol } from '../Symbol'
 import { TerminalSearch } from './TerminalSearch'
 
 /** Mounts the session's terminal and keeps its size fitted. */
-export function TerminalHost({ session, visible }: { session: Session; visible: boolean }) {
+export function TerminalHost({ session, visible, focused = visible }: { session: Session; visible: boolean; focused?: boolean }) {
   const { t } = useTranslation()
-  const { reportStatus, showPrompt, connections } = useWorkspace()
+  const { reportStatus, showPrompt, connections, activate, activeId } = useWorkspace()
   const hostRef = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState<{ cols: number; rows: number } | null>(null)
   const [copied, setCopied] = useState<number | null>(null)
@@ -115,13 +115,20 @@ export function TerminalHost({ session, visible }: { session: Session; visible: 
     const frame = window.requestAnimationFrame(() => {
       entry.fit.fit()
       setSize({ cols: entry.term.cols, rows: entry.term.rows })
-      entry.term.focus()
+      // In the split view several terminals are visible; only the active one takes the keyboard.
+      if (focused) entry.term.focus()
     })
     return () => window.cancelAnimationFrame(frame)
-  }, [visible, session.id, session.filesOpen])
+  }, [visible, focused, session.id, session.filesOpen])
 
   return (
-    <div className={'min-h-0 flex-1 flex-col ' + (visible ? 'flex' : 'hidden')}>
+    <div
+      className={'min-h-0 flex-1 flex-col ' + (visible ? 'flex' : 'hidden')}
+      // Clicking into a field of the split view makes its session the active one, for the buttons above.
+      onFocusCapture={() => {
+        if (activeId !== session.id) activate(session.id)
+      }}
+    >
       <div className="relative flex min-h-0 flex-1 flex-col">
         <div
           ref={hostRef}

@@ -43,6 +43,8 @@ class FakeAuthentik:
     existing: set[str] = field(default_factory=set)
     fail: tuple[str, str, int] | None = None
     discovery_ok: bool = True
+    #: Where the existing provider sends people back to; empty means no redirect URIs in its answer.
+    provider_redirect: str = ""
     calls: list[Recorded] = field(default_factory=list)
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
@@ -54,16 +56,17 @@ class FakeAuthentik:
         self.calls.append(Recorded(method, path, query, request.headers.get("authorization", ""), body))
         if self.fail and (method, path) == self.fail[:2]:
             return httpx.Response(self.fail[2], text="<html>authentik error page</html>")
-        if path == "/application/o/nextrmnl/.well-known/openid-configuration":
+        if path.startswith("/application/o/") and path.endswith("/.well-known/openid-configuration"):
             if not self.discovery_ok:
                 return httpx.Response(404, text="not found")
+            issuer = f"{URL}{path[: -len('.well-known/openid-configuration')]}"
             return httpx.Response(
                 200,
                 json={
-                    "issuer": ISSUER,
-                    "authorization_endpoint": f"{ISSUER}authorize/",
+                    "issuer": issuer,
+                    "authorization_endpoint": f"{issuer}authorize/",
                     "token_endpoint": f"{URL}/application/o/token/",
-                    "jwks_uri": f"{ISSUER}jwks/",
+                    "jwks_uri": f"{issuer}jwks/",
                 },
             )
         if not path.startswith("/api/v3/"):
@@ -106,6 +109,10 @@ class FakeAuthentik:
             return httpx.Response(200, json={"results": rows})
         if (method, path) == ("GET", "/providers/oauth2/"):
             rows = [{"pk": 7, "name": "nextrmnl"}] if "provider" in self.existing else []
+            if rows and self.provider_redirect:
+                rows[0]["redirect_uris"] = [{"matching_mode": "strict", "url": self.provider_redirect}]
+            if "name" in query:
+                rows = [row for row in rows if row["name"] == query["name"]]
             return httpx.Response(200, json={"results": rows})
         if (method, path) in (("POST", "/providers/oauth2/"), ("PATCH", "/providers/oauth2/7/")):
             status = 201 if method == "POST" else 200
@@ -261,6 +268,28 @@ def test_failed_discovery_after_storing_is_reported(client: TestClient, operator
     assert steps(result)[5] == ("filled", False)
     assert "discovery" in result["steps"][5]["detail"]
     assert stored()["oidc_client_id"] == "generated-client-id"
+
+
+def test_a_second_instance_takes_names_of_its_own(client: TestClient, operator: dict, fake: FakeAuthentik) -> None:
+    """Another nextrmnl at the same authentik holds the plain names; taking them would send its people back here.
+    The first one stays untouched, this one gets a provider, an application and an issuer of its own."""
+    fake.existing = {"cert", "mapping", "provider", "application"}
+    fake.provider_redirect = "https://first.example.com/api/oidc/callback"
+    result = run_setup(client)
+    assert steps(result) == [(key, True) for key in authentik.STEP_KEYS]
+    methods = [(call.method, call.path) for call in fake.calls]
+    assert ("PATCH", "/api/v3/providers/oauth2/7/") not in methods, "the first instance's provider stays"
+    assert ("PATCH", "/api/v3/core/applications/nextrmnl/") not in methods
+    provider = next(call for call in fake.calls if (call.method, call.path) == ("POST", "/api/v3/providers/oauth2/"))
+    assert provider.body["name"] == "nextrmnl (testserver)"
+    made = next(call for call in fake.calls if (call.method, call.path) == ("POST", "/api/v3/core/applications/"))
+    assert made.body["slug"] == "nextrmnl-testserver" and made.body["name"] == "nextrmnl (testserver)"
+    assert result["issuer"] == f"{URL}/application/o/nextrmnl-testserver/"
+    assert stored()["oidc_issuer"] == result["issuer"]
+    fake.provider_redirect = REDIRECT
+    fake.calls.clear()
+    run_setup(client)
+    assert ("PATCH", "/api/v3/providers/oauth2/7/") in [(c.method, c.path) for c in fake.calls], "its own: updated"
 
 
 def test_setup_is_operator_only_and_checks_the_address(client: TestClient, operator: dict, fake: FakeAuthentik) -> None:

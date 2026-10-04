@@ -695,10 +695,10 @@
     "setUp": "Set up",
     "show": "Show",
     "step": {
-      "application": "Application “nextrmnl” created",
+      "application": "Application created",
       "filled": "Client ID and secret entered in nextrmnl",
       "mapping": "Mapping for email_verified created",
-      "provider": "Provider “nextrmnl” created, redirect {{redirect}}",
+      "provider": "Provider created, redirect {{redirect}}",
       "reached": "authentik reached",
       "signingKey": "Signing key chosen (RS256) so authentik does not sign with the client secret"
     },

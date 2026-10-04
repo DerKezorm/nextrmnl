@@ -695,10 +695,10 @@
     "setUp": "Einrichten",
     "show": "Einblenden",
     "step": {
-      "application": "Anwendung „nextrmnl“ angelegt",
+      "application": "Anwendung angelegt",
       "filled": "Client-ID und Geheimnis in nextrmnl eingetragen",
       "mapping": "Zuordnung für email_verified angelegt",
-      "provider": "Anbieter „nextrmnl“ angelegt, Weiterleitung {{redirect}}",
+      "provider": "Anbieter angelegt, Weiterleitung {{redirect}}",
       "reached": "authentik erreicht",
       "signingKey": "Signaturschlüssel gewählt (RS256), damit authentik nicht mit dem Client-Geheimnis signiert"
     },

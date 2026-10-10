@@ -645,7 +645,7 @@
     "you": "du"
   },
   "signin": {
-    "publicUrlNote": "Nach einer Änderung kennt der Anbieter noch die alte Rückkehradresse. Bei authentik: unten „Mit authentik einrichten“ mit einem frischen API-Token noch einmal auf „Einrichten“, das ändert den vorhandenen Provider. Sonst die Rückkehradresse beim Anbieter von Hand anpassen.",
+    "publicUrlNote": "Nach einer Änderung kennen die Anbieter noch die alte Rückleitadresse. Bei authentik: unten unter „authentik in einem Schritt“ mit einem frischen API-Token noch einmal auf „Einrichten“, das ändert den vorhandenen Provider. Sonst die Rückleitadresse beim Anbieter von Hand anpassen.",
     "publicUrlSaved": "Öffentliche Adresse gespeichert.",
     "vaultNote": "Wer sich über OIDC anmeldet, legt beim ersten Mal ein eigenes Tresor-Passwort fest. Ohne dieses Passwort bleibt der Tresor zu, auch wenn die Anmeldung klappt.",
     "tokenHint": "In authentik unter Verzeichnis, Tokens und App-Passwörter, Zweck API. nextrmnl nutzt ihn einmal und speichert ihn nicht.",

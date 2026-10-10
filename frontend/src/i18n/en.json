@@ -645,7 +645,7 @@
     "you": "you"
   },
   "signin": {
-    "publicUrlNote": "After a change the provider still knows the old return address. With authentik: below under \"Set up with authentik\", click \"Set up\" once more with a fresh API token; that updates the existing provider. Otherwise adjust the return address at the provider by hand.",
+    "publicUrlNote": "After a change the providers still know the old redirect address. With authentik: below under “authentik in one step”, click “Set up” once more with a fresh API token; that updates the existing provider. Otherwise adjust the redirect address at the provider by hand.",
     "publicUrlSaved": "Public address saved.",
     "vaultNote": "Whoever signs in via OIDC sets their own vault password the first time. Without that password the vault stays closed even if the sign-in works.",
     "tokenHint": "In authentik under Directory, Tokens and App passwords, intent API. nextrmnl uses it once and does not store it.",

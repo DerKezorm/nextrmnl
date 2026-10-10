@@ -99,6 +99,17 @@ def _entries() -> list[OidcProvider]:
         return rows
 
 
+def test_a_client_secret_opens_only_for_its_own_provider() -> None:
+    """Bauplan 01: sealed under ``oidc-provider:<id>``; another provider's ciphertext does not open here, and the
+    secrets sealed without a context before (TOTP seeds, the old setting) still open as they did."""
+    sealed = crypto.encrypt_secret("client-secret-value", "oidc-provider:1")
+    assert crypto.decrypt_secret(sealed, "oidc-provider:1") == "client-secret-value"
+    assert crypto.decrypt_secret(sealed, "oidc-provider:2") == ""
+    assert crypto.decrypt_secret(sealed) == ""
+    plain = crypto.encrypt_secret("old-value")
+    assert crypto.decrypt_secret(plain) == "old-value" and crypto.decrypt_secret(plain, "oidc-provider:1") == ""
+
+
 # --- The migration --------------------------------------------------------------------------------------------------
 
 
@@ -143,6 +154,13 @@ def test_removing_every_entry_after_the_migration_brings_the_old_provider_back_n
     entry = oidc_store.migrate_settings(backup=False)
     assert entry is not None
     assert client.delete(f"/api/oidc/admin/providers/{entry.id}", headers=UI).status_code == 200
+    assert oidc_store.migrate_settings(backup=False) is None and _entries() == []
+    # Even with the old settings still there (the entry gone past the way back): the migration ran once, that is all.
+    _legacy(provider, label="Company")
+    assert oidc_store.migrate_settings(backup=False) is not None
+    with SessionLocal() as db:
+        db.query(OidcProvider).delete()
+        db.commit()
     assert oidc_store.migrate_settings(backup=False) is None and _entries() == []
 
 
@@ -416,6 +434,14 @@ def test_an_invitation_with_a_known_identity_adds_and_never_takes_away(
         db.commit()
     sign_in_via_oidc(fresh_browser(), provider, invite=_invite(MEMBER, ends=True), sub="anna-1")
     assert row_of("anna").expires_at > utcnow() + timedelta(days=2)
+    # An end later than the invitation's stays.
+    with SessionLocal() as db:
+        row = accounts.by_name(db, "anna")
+        assert row is not None
+        row.expires_at = utcnow() + timedelta(days=10)
+        db.commit()
+    sign_in_via_oidc(fresh_browser(), provider, invite=_invite(MEMBER, ends=True), sub="anna-1")
+    assert row_of("anna").expires_at > utcnow() + timedelta(days=9)
     sign_in_via_oidc(fresh_browser(), provider, invite=_invite(OPERATOR), sub="anna-1")
     assert (row_of("anna").role, row_of("anna").expires_at) == (OPERATOR, None)
 
@@ -549,8 +575,9 @@ def test_the_target_is_checked_again_on_the_way_back(anna_linked: FakeProvider) 
 
     browser = fresh_browser()
     target = location(browser.get("/api/oidc/sso/start", params={"next": "/vault"}))
-    # A forged cookie: not signed by this server, or signed but with a foreign page in it.
-    browser.cookies.set(NEXT_COOKIE, "L3ZhdWx0.0000", path="/api/oidc")
+    # A forged cookie: a page with a signature that is not this server's, or signed but with a foreign page in it.
+    body = oidc_router._pack_next("/vault").rsplit(".", 1)[0]
+    browser.cookies.set(NEXT_COOKIE, body + "." + "0" * 40, path="/api/oidc")
     from tests.oidc_helpers import come_back
 
     assert location(come_back(browser, anna_linked, target)) == "/"

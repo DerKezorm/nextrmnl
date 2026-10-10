@@ -195,7 +195,8 @@ function ProvidersCard({ providers, reload, publicUrl }: { providers: OidcProvid
                   <Symbol name="grip" className="h-4 w-4" />
                 </button>
               )}
-              <span className="min-w-0 flex-1">
+              {/* At least room for name and issuer; on a phone marks and buttons go to the next line. */}
+              <span className="min-w-0 flex-1 basis-56">
                 <span className="block truncate font-medium text-mist-100">{entry.label}</span>
                 <span className="block truncate font-mono text-xs text-mist-500">{entry.issuer}</span>
               </span>

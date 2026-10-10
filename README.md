@@ -61,9 +61,15 @@ is at [nextrmnl.nexapps.dev](https://nextrmnl.nexapps.dev).
   trust them; a changed key is refused until you say otherwise.
 - **Allowed targets**: by default nextrmnl only connects into private networks (10/8, 172.16/12, 192.168/16,
   100.64/10 for VPNs, loopback, link-local). The operator can add networks and names, or open it up.
-- **OpenID Connect**: any provider with discovery; for authentik there is a one-button setup that creates the
-  provider, application, signing key and mappings with a one-time API token, or a blueprint file to do it
-  without a token.
+- **OpenID Connect**: several providers side by side (authentik, Microsoft Entra ID with `common` or
+  `organizations`, Keycloak, Authelia, Pocket ID and any other with discovery), one button each on the sign-in
+  page. Accounts are matched by the identity at the provider only, never by an email address: existing accounts
+  link themselves under their account with their password, new people come by invitation (also through the
+  provider) or, if the operator allows it per provider, as members. Per provider the operator decides whether
+  it checks the second factor itself; if not, nextrmnl asks for its own code afterwards. For authentik there is
+  a one-button setup that creates provider, application and signing key with a one-time API token, or a
+  blueprint file to do it without a token. Sign-in with a password can be turned off once a provider is on;
+  the operator always keeps the password.
 - **Backups**: consistent copies on a schedule and before every schema change, downloads as an AES encrypted
   ZIP that 7-Zip opens without nextrmnl, restore with a preview and a restart.
 - **A log** with four levels (the deep ones switch themselves off), a request id in every line and in every
@@ -108,7 +114,7 @@ only on secure origins (Ctrl+V works regardless).
 Everything lives in `/data`: the SQLite database `nextrmnl.db`, `secret.key`, `backups/`, `logs/`. Mount it
 from a local disk, never from an SMB or NFS share.
 
-`secret.key` protects the server-side secrets (the OIDC client secret). The vaults do not depend on it: they
+`secret.key` protects the server-side secrets (the client secrets of the sign-in providers). The vaults do not depend on it: they
 open with the account's password only. Both go into the backup archive.
 
 ## Environment

@@ -49,6 +49,11 @@ class Provider:
     #: (an address a provider knew before the module) or a coupling, never by the form.
     redirect_path: str = ""
     created_at: datetime | None = None
+    #: The redirect address the authentik button last registered at authentik for this entry, "" when it never did
+    #: (an entry by hand, or one the button made before 1.0.10). Column ``registered_redirect`` (Bauplan 01, since
+    #: 1.0.10, ``server_default ''``). Compared with today's redirect address it tells whether authentik still sends
+    #: people to an old one (``providers.admin_view``: ``redirect_stale``).
+    registered_redirect: str = ""
 
 
 @dataclass(frozen=True)
@@ -68,6 +73,8 @@ class ProviderValues:
     managed: str
     position: int
     redirect_path: str = ""
+    #: None keeps the stored value (every write but the button's), a string stores it; a new row without one gets "".
+    registered_redirect: str | None = None
 
 
 @dataclass(frozen=True)
@@ -145,11 +152,13 @@ class Store(Protocol):
         ...
 
     def insert_provider(self, values: ProviderValues) -> Provider:
-        """A new row; ``created_at`` now. The secret is encrypted under ``secret_context(new id)``."""
+        """A new row; ``created_at`` now. The secret is encrypted under ``secret_context(new id)``.
+        ``values.registered_redirect`` None stores ""."""
         ...
 
     def update_provider(self, provider_id: int, values: ProviderValues) -> Provider:
-        """Overwrite the row. ``values.client_secret`` None keeps the stored secret."""
+        """Overwrite the row. ``values.client_secret`` None keeps the stored secret, ``values.registered_redirect``
+        None the stored redirect address."""
         ...
 
     def delete_provider(self, provider_id: int) -> None:

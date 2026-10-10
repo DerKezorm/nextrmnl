@@ -15,7 +15,9 @@ Paths, relative to the app's API (``AppConfig.api_prefix``):
 from __future__ import annotations
 
 import hmac
+import ipaddress
 import logging
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from urllib.parse import quote, urlsplit
@@ -85,10 +87,82 @@ def cookie_path_for(path: str) -> str:
     return standard if path == standard or path.startswith(standard + "/") else path
 
 
+#: What the column ``registered_redirect`` holds (``String(500)`` in the reference and the apps): a public address
+#: plus the longest callback path has to fit in.
+REGISTERED_REDIRECT_MAX = 500
+#: The longest callback path: an entry's own ``redirect_path`` (``providers.REDIRECT_PATH``, "/" and 300 more); the
+#: standard ``<api>/oidc/<slug>/callback`` stays below it (``AppConfig.api_prefix`` at most 100, a slug at most 40).
+CALLBACK_MAX = 301
+#: A public address: at most this long (so that it and any callback fit in ``registered_redirect``), and only these
+#: characters in its path (the app's base path, if any).
+PUBLIC_URL_MAX = REGISTERED_REDIRECT_MAX - CALLBACK_MAX
+_PUBLIC_PATH = re.compile(r"(/[A-Za-z0-9._~-]+)*")
+#: A host name label: letters, digits and dashes, not at either end (an IDN only in punycode, ``xn--``).
+_LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
+_NETLOC = re.compile(r"(?:\[(?P<ip6>[^\]]*)\]|(?P<host>[^:\[\]]*))(?::(?P<port>[^:]*))?")
+
+
+def configured_public_url() -> str:
+    """The public address the app has set (setting or environment), without a slash at the end; "" for none."""
+    return config.current().public_url().strip().rstrip("/")
+
+
+def _clean_host(netloc: str) -> str:
+    """Host and port of a public address, or ``ValueError`` with the reason."""
+    found = _NETLOC.fullmatch(netloc)
+    if found is None:
+        raise ValueError("no public address: host and port cannot be told apart")
+    port = found.group("port")
+    if port is not None and not (port.isascii() and port.isdigit() and 1 <= int(port) <= 65535):
+        raise ValueError("no public address: the port must be a number from 1 to 65535")
+    suffix = f":{int(port)}" if port is not None else ""
+    if found.group("ip6") is not None:
+        try:
+            address = ipaddress.IPv6Address(found.group("ip6"))
+        except ValueError as error:
+            raise ValueError("no public address: no IPv6 address in the brackets") from error
+        if address.scope_id:
+            raise ValueError("no public address: an IPv6 address with a zone cannot be reached from outside")
+        return f"[{address.compressed}]{suffix}"
+    host = found.group("host") or ""
+    if not host.isascii():
+        raise ValueError("no public address: write a host name with letters beyond ASCII in punycode (xn--)")
+    host = host.lower()
+    labels = host.split(".")
+    if not host or len(host) > 253 or not all(_LABEL.fullmatch(label) for label in labels):
+        raise ValueError("no public address: the host takes a to z, digits, dots and dashes")
+    return host + suffix
+
+
+def clean_public_url(url: str) -> str:
+    """A public address as the module stores and compares it: ``http`` or ``https``, a host (labels of a to z, digits
+    and inner dashes, an IDN in punycode, or an IPv6 address in brackets), an optional port from 1 to 65535 and base
+    path (no ``.`` or ``..`` segment, no backslash), no user, query or fragment, scheme and host in small letters, no
+    slash at the end, at most ``PUBLIC_URL_MAX`` characters. Raises ``ValueError`` with the reason for anything else
+    (it comes from a browser or a form)."""
+    raw = url.strip()
+    if not raw or len(raw) > PUBLIC_URL_MAX:
+        raise ValueError(f"no public address: empty or longer than {PUBLIC_URL_MAX} characters")
+    if any(char.isspace() or not char.isprintable() for char in raw):
+        raise ValueError("no public address: spaces or invisible characters")
+    if "?" in raw or "#" in raw or "\\" in raw or "@" in raw:
+        raise ValueError("no public address: no query, fragment, backslash or user")
+    try:
+        parts = urlsplit(raw)
+    except ValueError as error:
+        raise ValueError("no public address: it cannot be taken apart") from error
+    if parts.scheme.lower() not in ("http", "https"):
+        raise ValueError("no public address: it starts with http:// or https://")
+    host = _clean_host(parts.netloc)
+    path = parts.path.rstrip("/")
+    if not _PUBLIC_PATH.fullmatch(path) or any(part in (".", "..") for part in path.split("/")):
+        raise ValueError("no public address: the path takes letters, digits and . _ ~ - between slashes")
+    return f"{parts.scheme.lower()}://{host}{path}"
+
+
 def base_address(request_base: str) -> str:
     """The app's public address without a slash at the end: the configured one, else that of the request."""
-    configured = config.current().public_url().strip().rstrip("/")
-    return configured or request_base.strip().rstrip("/")
+    return configured_public_url() or request_base.strip().rstrip("/")
 
 
 def redirect_uri(slug: str, request_base: str, redirect_path: str = "") -> str:

@@ -4,14 +4,15 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 
 from .. import crypto
-from ..deps import DbSession, OperatorAccount
+from ..deps import DbSession, OperatorAccount, request_base
 from ..meldungen import fehler
 from ..services import notify, oidc_store, settings_service, targets, updates
 from ..services.settings_service import TARGETS_MODES
+from ..vendor.nexoidc import authentik
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
@@ -31,6 +32,9 @@ class SettingsIn(BaseModel):
     password_login: bool | None = None
     two_factor_required: bool | None = None
     public_url: str | None = Field(default=None, max_length=500)
+    #: The operator said yes to the question that comes back as 409 ``public_url_change`` when the address changes
+    #: what a sign-in provider has registered.
+    public_url_confirm: bool = False
     notify_enabled: bool | None = None
     notify_kind: str | None = None
     notify_url: str | None = Field(default=None, max_length=500)
@@ -45,8 +49,9 @@ def read(operator: OperatorAccount, db: DbSession) -> dict[str, Any]:
 
 
 @router.put("", summary="Change operator settings")
-def write(payload: SettingsIn, operator: OperatorAccount, db: DbSession) -> dict[str, Any]:
+def write(payload: SettingsIn, operator: OperatorAccount, db: DbSession, request: Request) -> dict[str, Any]:
     values = payload.model_dump(exclude_none=True)
+    confirmed = bool(values.pop("public_url_confirm", False))
     if "targets_mode" in values and values["targets_mode"] not in TARGETS_MODES:
         raise fehler("invalid_targets_mode", "Unknown mode for allowed targets.", 422)
     if "targets_list" in values:
@@ -86,6 +91,21 @@ def write(payload: SettingsIn, operator: OperatorAccount, db: DbSession) -> dict
         raise fehler("provider_first", "Set up a sign-in provider before turning sign-in with a password off.", 409)
     if values.get("update_check") is False:
         updates.forget()
+    if "public_url" in values:
+        # The address is what authentik and every other provider has registered a return address under: ask
+        # before it changes (the shared blueprint 04, card 1), and save nothing until the operator says yes.
+        try:
+            question = authentik.public_url_guard(
+                oidc_store.SqlStore(db), values["public_url"], request_base(request), confirm=confirmed
+            )
+        except ValueError as error:
+            raise fehler(
+                "public_url_invalid", "Use http:// or https:// followed by a host name, without a path.", 422
+            ) from error
+        if question is not None:
+            raise fehler(
+                "public_url_change", "The public address changes what the sign-in providers know.", 409, **question
+            )
     settings_service.save(db, values)
     return settings_service.public(db)
 

@@ -24,6 +24,8 @@ _APP_NAME = re.compile(r"[a-z][a-z0-9-]{1,30}")
 _COOKIE_SUFFIX = re.compile(r"[A-Za-z0-9_]*")
 #: Where an API lives: ``/api`` for most apps, ``/api/v1`` for apps whose whole API sits there (Bauplan 06).
 _API_PREFIX = re.compile(r"(/[a-z0-9]+)+")
+#: At most this long, so that the standard callback stays shorter than ``flow.CALLBACK_MAX`` (since 1.0.10).
+API_PREFIX_MAX = 100
 
 
 def _no_public_url() -> str:
@@ -39,14 +41,21 @@ class AppConfig:
     attempt never passes as a session and a session never as an attempt.
 
     ``public_url`` returns the address people use to reach the app, without a slash at the end, or "" when none is
-    set: the app's setting first, then the environment variable ``<APP>_PUBLIC_URL``. Without one the module falls back
-    to the address of the request, which is wrong behind a proxy; the authentik card warns about that.
+    set: the app's setting first, then the environment variable ``<APP>_PUBLIC_URL``. Without one the sign-in falls
+    back to the address of the request, which is wrong behind a proxy that ends TLS; the authentik button never
+    registers such an address (it asks the operator to confirm one, ``save_public_url``).
+
+    ``save_public_url`` stores an address the operator confirmed in the authentik card as the app's public address
+    (the setting ``public_url`` reads first) and commits it at once, in a transaction of its own. None: the app cannot
+    store one, and the button without a public address refuses with ``public_url_needed``.
     """
 
     app_name: str
     server_secret: Callable[[], str | bytes]
     api_prefix: str = "/api"
     public_url: Callable[[], str] = _no_public_url
+    #: Since 1.0.10: stores a confirmed public address (see above).
+    save_public_url: Callable[[str], None] | None = None
     #: nexcrate and nexsift: one account only. No invitations, no new accounts through a provider, and the authentik
     #: button adds the step ``binding`` (Bauplan 06).
     single_account: bool = False
@@ -67,7 +76,7 @@ class AppConfig:
     def __post_init__(self) -> None:
         if not _APP_NAME.fullmatch(self.app_name):
             raise ValueError(f"app_name {self.app_name!r} must be lower-case letters, digits and dashes")
-        if not _API_PREFIX.fullmatch(self.api_prefix):
+        if not _API_PREFIX.fullmatch(self.api_prefix) or len(self.api_prefix) > API_PREFIX_MAX:
             raise ValueError(f"api_prefix {self.api_prefix!r} must look like /api or /api/v1")
         if not _COOKIE_SUFFIX.fullmatch(self.cookie_suffix):
             raise ValueError(f"cookie_suffix {self.cookie_suffix!r} takes letters, digits and _ only")

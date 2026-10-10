@@ -820,7 +820,9 @@ def test_the_button_pressed_again_after_the_migration_keeps_the_old_address_the_
         make_account("anna")
         _legacy(signer, label="authentik", issuer=issuer, subjects={"anna": "anna-1"})
         oidc_store.migrate_settings(backup=False)
-        result = client.post("/api/oidc/authentik/setup", json={"url": ak.base, "token": ak.token}, headers=UI).json()
+        # The button never registers an address it guessed: the card sends the browser's own one along.
+        body = {"url": ak.base, "token": ak.token, "public_url": "http://testserver"}
+        result = client.post("/api/oidc/authentik/setup", json=body, headers=UI).json()
         assert result["ok"] and result["links_dropped"] == 0, result
         [row] = _entries()
         assert (row.slug, row.managed, row.redirect_path) == ("oidc", "authentik", "")

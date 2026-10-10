@@ -1,8 +1,8 @@
 """The way from one provider in the settings to the list (Bauplan 01 "Umstieg", 06 "Wanderung").
 
-nexlore, nexcanvas, nextasks, nexsuite, nexbrand, nexdiary, nexpaper, nexsift and nextrmnl keep one provider in their
-settings (``oidc_issuer``, ``oidc_client_id`` …) and the subject at the account (``oidc_subject``). At the first start
-with the module, inside the app's own migration and after its backup, these become:
+nexlore, nexcanvas, nextasks, nexsuite, nexbrand, nexdiary, nexpaper, nexsift, nextrmnl and nexcrate keep one provider
+in their settings (``oidc_issuer``, ``oidc_client_id`` …) and the subject at the account (``oidc_subject``; nexcrate
+in its settings). At the first start with the module, inside the app's own migration and after its backup, these become:
 
 1. an entry with the slug ``oidc``: name as before, ``auto_create`` as before, ``trusts_second_factor`` as the app
    behaved before (on for the apps that asked no code after the provider, off for nexdiary and nexpaper),
@@ -23,6 +23,14 @@ come up again; the list would never see that change and the next mirror would ov
 ``fingerprint`` of what its mirror wrote, and at start-up ``resync`` takes over what the older version changed
 since: only the parts whose fingerprint differs, nothing else. The fingerprint holds hashes only, never a secret or a
 subject in the clear.
+
+**One rule for the way back** (since 1.0.10). What the old settings and the old column show is ``way_back``'s, not
+the app's: it depends only on the entry ``oidc`` and the **anchor**, the issuer the older version knows (at the
+migration the old issuer, after a take-over by ``resync`` the one taken over). The same issuer and the entry on and
+trusted with the second factor: the entry in full. The same issuer and the entry off or not trusted: issuer and name
+stay, no client, ``auto_create`` off, the subjects as they are. Another issuer than the anchor, or no entry: all
+empty, and the anchor is closed for good (``CLOSED``); only ``resync`` opens it again, when the older version sets a
+provider up.
 """
 
 from __future__ import annotations
@@ -32,11 +40,19 @@ import hashlib
 import json
 import logging
 import re
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field, replace
 
 from . import config, coupling, model, protocol, providers
-from .model import LEGACY_SLUG, MANAGED_NEXSUITE, Link, Provider, ProviderValues, Store
+from .model import (
+    LEGACY_SLUG,
+    MANAGED_AUTHENTIK,
+    MANAGED_NEXSUITE,
+    Link,
+    Provider,
+    ProviderValues,
+    Store,
+)
 
 DEFAULT_LABEL = "OpenID Connect"
 _AUTHENTIK_ISSUER = re.compile(r"/application/o/[-A-Za-z0-9_]+/?$")
@@ -162,19 +178,28 @@ def apply_coupled(
 # Up again after the way back (fingerprint and resync)
 # ---------------------------------------------------------------------------
 
-#: The form of a fingerprint. A stored one of another form is not compared (nothing taken over, a new one is stored).
-FINGERPRINT_FORM = "nexoidc-fp1"
-#: Settings without a provider (no issuer or no client id): the older version lets nobody in through them, whatever
-#: else stands there (nexlore keeps the issuer and the name of an entry that is off).
+#: The form of a fingerprint. Since 1.0.10 the provider part tells "only an issuer" (rule 2 of ``way_back``) from "no
+#: provider", so that a provider the older version removes while the entry is off is seen.
+FINGERPRINT_FORM = "nexoidc-fp2"
+#: The forms ``resync`` compares: one stored by 1.0.9 is compared with the settings of now in its own form, so the
+#: first start with 1.0.10 sees what the older version changed as 1.0.9 would have. A stored one of another form is
+#: not compared (nothing taken over, a new one is stored).
+_FORMS = ("nexoidc-fp1", FINGERPRINT_FORM)
+#: Settings without an issuer: the older version knows no provider.
 _NO_PROVIDER = "-"
+#: Before a provider part: an issuer without a client id (``way_back`` rule 2), no provider to sign in through.
+_ISSUER_ONLY = "~"
+#: The anchor of a way back that is closed for good: the older version is shown no provider and no subject, whatever
+#: the entry ``oidc`` says, until ``resync`` takes over a provider the older version set up (Bauplan 01 "Umstieg").
+CLOSED = "-"
 
 
-def _hashed(kind: str, value: object) -> str:
+def _hashed(kind: str, value: object, form: str = FINGERPRINT_FORM) -> str:
     """128 bits of SHA-256 over a canonical form, base64url without padding: no character a fingerprint uses to
     separate its parts, and nothing the scanners take for a key. No key of the app goes in: a fingerprint must stay
     the same when the app's secret changes or a backup comes back, or a change that never happened would be taken
     over. The secret it covers is in the same database, encrypted, anyway."""
-    canonical = json.dumps([FINGERPRINT_FORM, kind, value], ensure_ascii=True, separators=(",", ":"))
+    canonical = json.dumps([form, kind, value], ensure_ascii=True, separators=(",", ":"))
     digest = hashlib.sha256(canonical.encode("ascii")).digest()[:16]
     return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
 
@@ -183,8 +208,11 @@ def _has_provider(legacy: Legacy) -> bool:
     return bool(protocol.normalize_issuer(legacy.issuer)) and bool(legacy.client_id.strip())
 
 
-def _settings_part(legacy: Legacy) -> str:
+def _settings_part(legacy: Legacy, form: str) -> str:
     if not _has_provider(legacy):
+        issuer = protocol.normalize_issuer(legacy.issuer)
+        if form == FINGERPRINT_FORM and issuer:
+            return _ISSUER_ONLY + _hashed("issuer", issuer, form)
         return _NO_PROVIDER
     return _hashed(
         "settings",
@@ -196,6 +224,7 @@ def _settings_part(legacy: Legacy) -> str:
             " ".join(legacy.label.split()),
             bool(legacy.auto_create),
         ],
+        form,
     )
 
 
@@ -213,23 +242,35 @@ def fingerprint(legacy: Legacy, subjects: Iterable[tuple[int, str]]) -> str:
     the same subjects). Pure and stable: the same settings give the same fingerprint, in any order of the subjects.
 
     The app stores it after every mirror (inside the same transaction) and compares it at start-up. It holds one
-    hash for the provider (issuer, client id, secret, name, ``auto_create``; or "no provider") and one per account
-    with a subject, so that ``resync`` can tell which of them the older version changed."""
+    hash for the provider (issuer, client id, secret, name, ``auto_create``; without a client id the issuer alone,
+    marked ``~``; or "no provider" without an issuer) and one per account with a subject, so that ``resync`` can tell
+    which of them the older version changed."""
+    return _fingerprint(legacy, subjects, FINGERPRINT_FORM)
+
+
+def _fingerprint(legacy: Legacy, subjects: Iterable[tuple[int, str]], form: str) -> str:
     accounts = ",".join(
-        f"{account_id}:{_hashed('subject', subject)}" for account_id, subject in sorted(_subjects_of(subjects).items())
+        f"{account_id}:{_hashed('subject', subject, form)}"
+        for account_id, subject in sorted(_subjects_of(subjects).items())
     )
-    return f"{FINGERPRINT_FORM}|{_settings_part(legacy)}|{accounts}"
+    return f"{form}|{_settings_part(legacy, form)}|{accounts}"
 
 
 @dataclass(frozen=True)
 class _Print:
+    form: str
     settings: str
     accounts: dict[int, str]
+
+    @property
+    def provider(self) -> bool:
+        """The older version had a provider to sign in through (issuer and client id)."""
+        return self.settings != _NO_PROVIDER and not self.settings.startswith(_ISSUER_ONLY)
 
 
 def _read(value: str | None) -> _Print | None:
     parts = (value or "").split("|")
-    if len(parts) != 3 or parts[0] != FINGERPRINT_FORM or not parts[1]:
+    if len(parts) != 3 or parts[0] not in _FORMS or not parts[1]:
         return None
     accounts: dict[int, str] = {}
     for item in filter(None, parts[2].split(",")):
@@ -237,13 +278,13 @@ def _read(value: str | None) -> _Print | None:
         if not account.isdigit() or not digest:
             return None
         accounts[int(account)] = digest
-    return _Print(settings=parts[1], accounts=accounts)
+    return _Print(form=parts[0], settings=parts[1], accounts=accounts)
 
 
 @dataclass(frozen=True)
 class Changes:
     """What the older version changed since the stored fingerprint. ``known`` False: there is no stored fingerprint
-    of this form (first start with 1.0.9), nothing can be told and nothing is taken over."""
+    of a form it reads, or two different forms: nothing can be told and nothing is taken over."""
 
     known: bool = False
     settings: bool = False
@@ -259,7 +300,7 @@ def changes(previous: str | None, current: str) -> Changes:
     well (nexcanvas ``oidc_way_back_held``): ``settings`` True means the older version wrote new settings, and they
     win over such a copy."""
     before, now = _read(previous), _read(current)
-    if before is None or now is None:
+    if before is None or now is None or before.form != now.form:
         return Changes()
     touched = {
         account
@@ -267,6 +308,16 @@ def changes(previous: str | None, current: str) -> Changes:
         if before.accounts.get(account) != now.accounts.get(account)
     }
     return Changes(known=True, settings=before.settings != now.settings, accounts=frozenset(touched))
+
+
+def changes_since(previous: str | None, legacy: Legacy, subjects: Iterable[tuple[int, str]]) -> Changes:
+    """What the older version changed since the stored fingerprint ``previous``, read from the old settings and the
+    old column as for ``plan``: the comparison ``resync`` makes, in the form ``previous`` was stored in (one of 1.0.9
+    is compared as 1.0.9 would have). For an app that makes a backup before ``resync`` only when something changed:
+    ``changes_since(...).any``. ``changes`` alone compares two fingerprints of one form and tells nothing across
+    forms."""
+    stored = _read(previous)
+    return changes(previous, _fingerprint(legacy, list(subjects), stored.form if stored else FINGERPRINT_FORM))
 
 
 @dataclass
@@ -285,6 +336,8 @@ class Resync:
     #: Accounts whose new old subject another account holds already: without a link at the entry now (their old one
     #: went, the older version gave it up); they are in ``unlinked`` as well when they had one.
     refused: list[int] = field(default_factory=list)
+    #: The anchor from now on (since 1.0.10): what the app stores for ``way_back`` (``keep_anchor`` got it already).
+    anchor: str = CLOSED
 
     @property
     def wrote(self) -> bool:
@@ -338,6 +391,8 @@ def resync(
     *,
     previous: str | None,
     trusts_second_factor: bool,
+    anchor: str | None = None,
+    keep_anchor: Callable[[str], None] | None = None,
 ) -> Resync:
     """At start-up, after the first migration, before the next mirror: take over what the older version changed in
     the old settings and the old column since the fingerprint ``previous`` was stored. ``legacy`` and ``subjects`` are
@@ -346,7 +401,8 @@ def resync(
     Only what differs from the fingerprint counts, so an "empty" the mirror wrote itself (entry off, or the provider
     not checking the second factor) is no change. What changed:
 
-    - the old settings now without a provider: the entry ``oidc`` goes, with its links;
+    - the old settings now without a provider (no client id; also when only the issuer stood there, the entry off
+      or not trusted, and the older version removed it): the entry ``oidc`` goes, with its links;
     - a provider there and no entry ``oidc``: the entry is made as by the migration (its old callback);
     - another issuer: like an issuer change (the entry's links go, the older version's values come in);
     - the same issuer: client id, secret, name and ``auto_create`` are taken over;
@@ -358,23 +414,37 @@ def resync(
       swapped, are taken over in any order of the accounts.
 
     While the app is coupled to nexsuite, nothing (``Resync.coupled``). Commits once when it wrote anything; the app's
-    commit mirrors again, and the app stores the new fingerprint."""
+    commit mirrors again, and the app stores the new fingerprint.
+
+    **The anchor** (since 1.0.10): ``anchor`` is the one the app stored (None or "" when it has none yet: a database
+    migrated before 1.0.10). ``Resync.anchor`` is the one from now on: the issuer taken over when the older version
+    set a provider up or changed it, ``CLOSED`` when it removed it, else the stored one. Without a stored one it is
+    derived: the issuer of the entry ``oidc`` while the old settings name the same issuer, else ``CLOSED``. The app
+    stores it through ``keep_anchor``, which is called once, always, before ``resync`` commits: the mirror inside that
+    commit must see the new anchor, or it would close the way back on a take-over. A subject is taken over only while
+    the anchor is the entry's issuer (a closed way back shows the older version no provider, so a subject it wrote
+    then names nobody at the entry)."""
     subjects = list(subjects)
-    found = changes(previous, fingerprint(legacy, subjects))
+    stored = _read(previous)
+    found = changes_since(previous, legacy, subjects)
     done = Resync(changes=found)
-    if not found.any:
-        return done
     entry = store.provider_by_slug(LEGACY_SLUG)
-    if providers.coupled(store) or (entry is not None and entry.managed == MANAGED_NEXSUITE):
-        done.coupled = True
-        _log().warning("OIDC: the older version changed its sign-in settings while coupled; nothing taken over")
+    coupled_now = providers.coupled(store) or (entry is not None and entry.managed == MANAGED_NEXSUITE)
+    if not found.any or coupled_now:
+        done.anchor = _kept(store, legacy, anchor)
+        if keep_anchor is not None:
+            keep_anchor(done.anchor)
+        if found.any:
+            done.coupled = True
+            _log().warning("OIDC: the older version changed its sign-in settings while coupled; nothing taken over")
         return done
     olds = _subjects_of(subjects)
     touched = set(found.accounts)
     if found.settings:
-        before = _read(previous)
-        had_provider = before is not None and before.settings != _NO_PROVIDER
+        had_provider = stored is not None and stored.provider
         wanted = plan(legacy, sorted(olds.items()), trusts_second_factor=trusts_second_factor)
+        # The issuer as the older version wrote it (slash and all): it compares its own setting letter by letter.
+        done.anchor = CLOSED if wanted is None else _open(legacy.issuer) or CLOSED
         if wanted is None:
             if entry is not None:
                 store.delete_provider(entry.id)
@@ -402,8 +472,12 @@ def resync(
                 values = replace(values, enabled=True, trusts_second_factor=trusts_second_factor)
             entry = store.update_provider(entry.id, values)
             done.values_taken = True
-    if entry is not None:
+    else:
+        done.anchor = _kept(store, legacy, anchor)
+    if entry is not None and _open(done.anchor) and protocol.same_issuer(entry.issuer, done.anchor):
         _take_subjects(store, entry, {account_id: olds.get(account_id, "") for account_id in touched}, done)
+    if keep_anchor is not None:
+        keep_anchor(done.anchor)
     if done.wrote:
         store.commit()
         protocol.clear_caches()
@@ -419,3 +493,100 @@ def resync(
         len(done.refused),
     )
     return done
+
+
+# ---------------------------------------------------------------------------
+# The way back: what the old settings show (since 1.0.10)
+# ---------------------------------------------------------------------------
+
+#: The old settings without a provider: what the older version finds when the way back is closed.
+_EMPTY = Legacy(issuer="", client_id="", client_secret="")
+
+
+def _open(anchor: str | None) -> str:
+    """The issuer of an open anchor as the older version wrote it (without spaces around, a slash at the end kept),
+    or "" when it is closed or unknown."""
+    text = (anchor or "").strip()
+    issuer = protocol.normalize_issuer(text)
+    return "" if not issuer or issuer == CLOSED else text
+
+
+def anchor_of(legacy: Legacy | None) -> str:
+    """The anchor at the migration (``apply``, ``apply_coupled`` with ``own``): the issuer of the old settings, or
+    ``CLOSED`` when they hold no provider (no issuer or no client id; then a provider the older version sets up later
+    comes in through ``resync``, which opens the anchor). Stored by the app before the migration commits."""
+    if legacy is None or not _has_provider(legacy):
+        return CLOSED
+    return _open(legacy.issuer) or CLOSED
+
+
+def _kept(store: Store, legacy: Legacy, anchor: str | None) -> str:
+    """The anchor when ``resync`` takes no provider over: the stored one, written as the old settings write it now
+    when they name the same issuer (the older version may have written it again with a slash, its button does);
+    without one (a database migrated before 1.0.10) the old settings' issuer while it is the entry's, else
+    ``CLOSED``."""
+    written = _open(legacy.issuer)
+    if anchor:
+        kept = _open(anchor)
+        if not kept:
+            return CLOSED
+        return written if written and protocol.same_issuer(written, kept) else kept
+    entry = store.provider_by_slug(LEGACY_SLUG)
+    if entry is None or entry.managed == MANAGED_NEXSUITE or not written:
+        return CLOSED
+    return written if protocol.same_issuer(entry.issuer, written) else CLOSED
+
+
+@dataclass(frozen=True)
+class Mirror:
+    """What the app writes into the old settings and the old column: ``legacy`` as the settings (in the app's own
+    form, as it wrote them before the module; ``set_up_by_button`` for an app that marks the button's settings), each
+    account's subject from ``subjects`` and "" for every other account, and ``anchor`` as its stored anchor."""
+
+    legacy: Legacy
+    subjects: dict[int, str]
+    anchor: str
+
+
+def way_back(entry: Provider | None, links: Iterable[tuple[int, str]], anchor: str | None) -> Mirror:
+    """The way back (Bauplan 01 "Umstieg" 4), one rule for every app. Pure: the app calls it inside every commit,
+    after the change, writes what comes back, then stores the fingerprint of what it reads back.
+
+    ``entry`` is the entry ``oidc`` as the store gives it (secret decrypted), or None; ``links`` its links as
+    (account, subject); ``anchor`` the stored anchor (None or "": none, the way back is closed).
+
+    1. The entry on, the provider trusted with the second factor, and the same issuer as the anchor: the entry in
+       full (client id, secret, name, ``auto_create``; the issuer as the anchor writes it, since 1.0.11), the
+       subjects are its links.
+    2. The entry off or not trusted, the same issuer: issuer and name stay, client id and secret empty,
+       ``auto_create`` off, the subjects are its links. The older version lets nobody in without a client; if it sets
+       another issuer up, its own comparison drops the old subjects, and with a new client for the same issuer they
+       hold, rightly. On again brings everything back.
+    3. Another issuer than the anchor (changed in the new version) or no entry ``oidc``: everything empty, the
+       subjects too, and the anchor ``CLOSED`` for good, through off and on, and when the issuer is set back. The
+       older version finds no provider, so its bridge over a confirmed address and its ``auto_create`` never act.
+    4. Only ``resync`` opens it again (see there).
+
+    While coupled (the entry ``oidc`` is nexsuite's): everything empty and the anchor as it was; a Verbund app keeps
+    its own rule for that time and does not call this then."""
+    if entry is not None and entry.managed == MANAGED_NEXSUITE:
+        return Mirror(legacy=_EMPTY, subjects={}, anchor=_open(anchor) or CLOSED)
+    known = _open(anchor)
+    if entry is None or not known or not protocol.same_issuer(entry.issuer, known):
+        return Mirror(legacy=_EMPTY, subjects={}, anchor=CLOSED)
+    button = entry.managed == MANAGED_AUTHENTIK
+    # The issuer as the older version knows it, not the entry's form: most older versions compare their setting
+    # letter by letter when a provider is saved (nexcanvas, nextasks, nexbrand, nextrmnl, nexsift, nexcrate), and
+    # their authentik button writes it with a slash; written without, the button dropped every subject there.
+    if entry.enabled and entry.trusts_second_factor:
+        legacy = Legacy(
+            issuer=known,
+            client_id=entry.client_id,
+            client_secret=entry.client_secret or "",
+            label=entry.label,
+            auto_create=entry.auto_create,
+            set_up_by_button=button,
+        )
+    else:
+        legacy = Legacy(issuer=known, client_id="", client_secret="", label=entry.label, set_up_by_button=button)
+    return Mirror(legacy=legacy, subjects=_subjects_of(links), anchor=known)

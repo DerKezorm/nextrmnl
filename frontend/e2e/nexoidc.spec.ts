@@ -30,7 +30,9 @@ test('33: sign-in through the provider button ends in a session', async ({ page,
   await page.goto('/settings?tab=signin')
   await page.getByLabel('Address of authentik').fill(AUTHENTIK)
   await page.getByLabel('API token').fill(process.env.E2E_AUTHENTIK_TOKEN!)
-  await page.getByRole('button', { name: 'Set up', exact: true }).click()
+  // No public address yet: the card suggests the one this browser uses and registers nothing it guessed.
+  await expect(page.getByTestId('authentik-proposal')).toHaveText(new URL(page.url()).origin)
+  await page.getByRole('button', { name: 'Use it and set up', exact: true }).click()
   await expect(page.getByTestId('authentik-steps')).toContainText('Settings here')
   await expect(page.getByText('set up through authentik')).toBeVisible()
   // The operator links the own account through its page: the password once more, off to the provider and back.
@@ -73,7 +75,7 @@ test('34: add, edit and remove a provider; the authentik card lists its steps', 
   const listed = (await (await page.request.get('/api/oidc/admin/providers')).json()) as { issuer: string; managed: string }[]
   let issuer = listed.find((entry) => entry.managed === 'authentik')?.issuer
   if (!issuer) {
-    const answer = await page.request.post('/api/oidc/authentik/setup', { data: { url: AUTHENTIK, token: process.env.E2E_AUTHENTIK_TOKEN }, headers: UI })
+    const answer = await page.request.post('/api/oidc/authentik/setup', { data: { url: AUTHENTIK, token: process.env.E2E_AUTHENTIK_TOKEN, public_url: new URL(page.url()).origin }, headers: UI })
     issuer = ((await answer.json()) as { issuer: string }).issuer
     await page.reload()
   }
@@ -103,7 +105,7 @@ test('34: add, edit and remove a provider; the authentik card lists its steps', 
   // The authentik card: an address nobody answers at gives the step list with the first step failed.
   await page.getByLabel('Address of authentik').fill('http://127.0.0.1:9')
   await page.getByLabel('API token').fill(`e2e-${Date.now()}`)
-  await page.getByRole('button', { name: 'Set up', exact: true }).click()
+  await page.getByRole('button', { name: /^(Use it and set up|Set up)$/ }).click()
   await expect(page.getByText('Connection to authentik')).toBeVisible()
   await expect(page.getByText('cannot be reached at this address', { exact: false })).toBeVisible()
   expect(problems).toEqual([])

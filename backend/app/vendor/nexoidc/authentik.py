@@ -31,6 +31,7 @@ import logging
 import re
 import ssl
 import unicodedata
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
@@ -51,7 +52,21 @@ from .model import (
 STEP_KEYS = ("reached", "signingKey", "mapping", "provider", "application", "filled")
 #: Only in apps with one account (Bauplan 06): authentik lets only the token's own user into the application.
 STEP_BINDING = "binding"
-REASONS = ("unreachable", "unusable", "token", "malformed", "answered", "slug", "coupled", "issuer_change")
+REASONS = (
+    "unreachable",
+    "unusable",
+    "token",
+    "malformed",
+    "answered",
+    "slug",
+    "coupled",
+    "issuer_change",
+    "public_url_needed",
+)
+#: How much of a proxy header the card is shown; it comes from outside.
+FORWARDED_MAX = 200
+#: Scheme and host of an address, the same way ``frontend/oidc.ts`` (``authentikAddressMismatch``) takes them apart.
+_ORIGIN = re.compile(r"^([A-Za-z][A-Za-z0-9+.-]*)://([^/?#]*)")
 #: authentik's own mappings, found by their managed names.
 MANAGED_MAPPINGS = (
     "goauthentik.io/providers/oauth2/scope-openid",
@@ -126,6 +141,10 @@ class SetupResult:
     links_dropped: int = 0
     #: With ``reason: issuer_change``: how many accounts would have to link again.
     count: int = 0
+    #: The public address this run stored (the one the operator confirmed), "" when the app had one already.
+    public_url: str = ""
+    #: With ``reason: public_url_needed``: what the card shows (``address_view``).
+    address: dict[str, Any] | None = None
 
     @property
     def ok(self) -> bool:
@@ -142,6 +161,8 @@ class SetupResult:
             "provider_id": self.provider_id,
             "links_dropped": self.links_dropped,
             "count": self.count,
+            "public_url": self.public_url,
+            "address": self.address,
         }
 
 
@@ -490,12 +511,15 @@ async def _fill(
     client_id: str,
     client_secret: str,
     confirmed: bool,
+    redirect: str,
 ) -> tuple[Provider, int, str]:
     """Confirm the new issuer with one discovery, then write the entry. Probed first: a failed discovery changes
     nothing in the list, and links only go when an issuer that answers really replaces the old one (Bauplan 02). What
     authentik handed out stays there; running the button again once authentik is reachable fills the entry. A new
     entry is on, makes no new accounts and trusts authentik with the second factor; an existing one keeps the
-    operator's choices and only gets issuer, client id and secret. The number returned is the links really dropped.
+    operator's choices and only gets issuer, client id and secret. Either way the entry remembers the redirect
+    address this run registered at authentik (``registered_redirect``). The number returned is the links really
+    dropped.
 
     The guard behind the question at the start: should authentik have handed out another issuer than foreseen, an
     unconfirmed change stops here too, with nothing written in the app (what the run made in authentik stays, and the
@@ -529,6 +553,7 @@ async def _fill(
                 trusts_second_factor=True,
                 managed=MANAGED_AUTHENTIK,
                 position=position,
+                registered_redirect=redirect,
             )
         )
         note = f"entry {saved.slug!r} added"
@@ -549,6 +574,7 @@ async def _fill(
                 managed=MANAGED_AUTHENTIK,
                 position=entry.position,
                 redirect_path=entry.redirect_path,
+                registered_redirect=redirect,
             ),
         )
         note = f"entry {saved.slug!r} updated" + (f", {dropped} links dropped" if dropped else "")
@@ -558,9 +584,22 @@ async def _fill(
 
 
 async def setup(
-    store: Store, base_url: str, token: str, request_base: str, *, confirm_issuer_change: bool = False
+    store: Store,
+    base_url: str,
+    token: str,
+    request_base: str,
+    *,
+    confirm_issuer_change: bool = False,
+    public_url: str = "",
+    headers: Mapping[str, str] | None = None,
 ) -> SetupResult:
     """The whole run, step by step. Stops at the first failure; the result lists every step that ran.
+
+    The button never registers an address it guessed from the request (Bauplan 03, "Rückleitadresse", decided on
+    10.10.2026). Without a public address of the app it needs ``public_url``, the address the operator confirmed in the
+    card (the one the browser uses); it stores that through ``AppConfig.save_public_url`` and only then sets up.
+    Without either it stops at the first step, before any call, with ``reason: public_url_needed`` and ``address``
+    (``address_view``, ``headers`` are the request's). An address the app has already wins over a confirmed one.
 
     Would the run give the entry another issuer while accounts are linked to it, it stops at the first step, after
     reading calls only, with ``reason: issuer_change`` and ``count`` (Bauplan 03): nothing is written in authentik or
@@ -579,6 +618,11 @@ async def setup(
         if not token.isascii() or not token.isprintable() or any(char.isspace() for char in token):
             # No HTTP header carries it, so no authentik token looks like this (Bauplan 03: reason "malformed").
             raise StepFailed("the token holds characters an HTTP header cannot carry", "malformed", 0)
+        try:
+            result.public_url = _public_url_first(store, public_url, request_base)
+        except StepFailed:
+            result.address = address_view(store, request_base, headers)
+            raise
         api = _Api(base_url, token, await tls.context())
     except StepFailed as error:
         result.steps.append(Step(STEP_KEYS[0], False, error.detail, error.reason, error.status))
@@ -624,7 +668,14 @@ async def setup(
                     result.issuer = issuer_for(base_url, slug)
                 elif key == "filled":
                     saved, result.links_dropped, detail = await _fill(
-                        store, entry, entry_slug, result.issuer, client_id, client_secret, confirm_issuer_change
+                        store,
+                        entry,
+                        entry_slug,
+                        result.issuer,
+                        client_id,
+                        client_secret,
+                        confirm_issuer_change,
+                        redirect,
                     )
                     result.provider_id = saved.id
                 else:
@@ -639,6 +690,225 @@ async def setup(
     finally:
         await api.close()
     return result
+
+
+# ---------------------------------------------------------------------------
+# The public address (Bauplan 03 "Rückleitadresse", 04 "Karte 3"; 1.0.10)
+# ---------------------------------------------------------------------------
+
+
+class PublicUrlNeeded(Exception):
+    """The app has no public address yet. The blueprint names none it guessed from the request: its route answers 409
+    with the code ``public_url_needed``, and the card offers the browser's address first."""
+
+
+def _public_url_first(store: Store, confirmed: str, request_base: str) -> str:
+    """Make sure the app has a public address before anything is registered: the one it has, else the one the
+    operator confirmed, stored through ``save_public_url``. The address stored now, or "" when the app had one. An
+    entry of the button from before 1.0.10 first gets the redirect address it had (``_remember_registered``): should
+    the run fail after the address is stored, the card still reports ``stale``."""
+    if flow.configured_public_url():
+        return ""
+    if not confirmed.strip():
+        raise StepFailed(
+            "the app has no public address and the operator confirmed none; nothing was registered",
+            "public_url_needed",
+        )
+    try:
+        address = flow.clean_public_url(confirmed)
+    except ValueError as error:
+        raise StepFailed(f"the confirmed public address cannot be used ({error})", "public_url_needed") from error
+    try:
+        _remember_registered(store, request_base)
+        _store_public_url(address)
+    except PublicUrlNotKept as error:
+        # Nothing is registered without it.
+        raise StepFailed(str(error), "public_url_needed") from error
+    _log().info("public address set to %s, confirmed in the authentik card", address)
+    return address
+
+
+def _header(headers: Mapping[str, str] | None, name: str) -> str:
+    """The first value of a request header, for the card only (never trusted for an address)."""
+    for key, value in (headers or {}).items():
+        if str(key).lower() == name:
+            first = str(value).split(",")[0].strip()[:FORWARDED_MAX]
+            return first if first.isprintable() else ""
+    return ""
+
+
+def address_mismatch(proposal: str, seen: str) -> str:
+    """How the address the browser uses differs from the one the server sees: ``scheme`` (http here, https there:
+    a proxy ends TLS and the app does not take its word), ``host``, or "" when they agree. The browser helper
+    ``authentikAddressMismatch`` answers the same."""
+    browser, server = _ORIGIN.match(proposal.strip()), _ORIGIN.match(seen.strip())
+    if browser is None or server is None:
+        return ""
+    if browser.group(1).lower() != server.group(1).lower():
+        return "scheme"
+    if browser.group(2).lower() != server.group(2).lower():
+        return "host"
+    return ""
+
+
+def _managed(store: Store) -> Provider | None:
+    managed = [entry for entry in store.list_providers() if entry.managed == MANAGED_AUTHENTIK]
+    return managed[0] if managed else None
+
+
+def address_view(store: Store, request_base: str, headers: Mapping[str, str] | None = None) -> dict[str, Any]:
+    """What the authentik card shows about the address (``GET <api>/oidc/authentik/address``, and ``address`` of a
+    run refused with ``public_url_needed``):
+
+    - ``public_url``: the app's public address, "" for none (then the card suggests the browser's own);
+    - ``seen``: the address of this request as the server sees it, ``forwarded_proto`` and ``forwarded_host`` what a
+      proxy said, ``proxy_ignored`` whether that differs from what the app took (the card warns);
+    - ``callback_path``: what the button registers behind the public address, ``redirect_uri`` the redirect address
+      the sign-in sends today;
+    - ``registered_redirect_uri``: what the button registered last, ``stale`` whether that is no longer today's.
+    """
+    seen = request_base.strip().rstrip("/")
+    entry = _managed(store)
+    slug = entry.slug if entry is not None else providers.free_slug(store, ENTRY_SLUG)
+    callback = flow.callback_path(slug, entry.redirect_path if entry is not None else "")
+    redirect = flow.base_address(seen) + callback
+    registered = entry.registered_redirect if entry is not None else ""
+    proto, host = _header(headers, "x-forwarded-proto"), _header(headers, "x-forwarded-host")
+    origin = _ORIGIN.match(seen)
+    scheme, netloc = (origin.group(1).lower(), origin.group(2).lower()) if origin else ("", "")
+    return {
+        "public_url": flow.configured_public_url(),
+        "seen": seen,
+        "forwarded_proto": proto,
+        "forwarded_host": host,
+        "proxy_ignored": bool(proto and proto.lower() != scheme) or bool(host and host.lower() != netloc),
+        "callback_path": callback,
+        "redirect_uri": redirect,
+        "registered_redirect_uri": registered,
+        "stale": bool(registered) and registered != redirect,
+    }
+
+
+def public_url_change(store: Store, new_url: str, request_base: str = "") -> dict[str, Any]:
+    """What saving ``new_url`` as the public address leaves behind (the question of card 1, Bauplan 04):
+
+    - ``entries`` and ``count``: the entries the button set up whose redirect address at authentik the new address
+      leaves behind (``address``: the first one's, for ``oidc.admin.addressChangeConfirm``). An entry the button made
+      before 1.0.10 (no ``registered_redirect``) counts with the redirect address of today.
+    - ``hand``: the active entries made by hand whose redirect address changes with it; the operator changes it at
+      their provider (``oidc.admin.addressChangeHand`` with ``count`` = ``hand``). The module cannot reach them.
+
+    ``count`` and ``hand`` both 0: save without asking. ``count`` 0 and ``hand`` above 0 asks as well, with
+    ``oidc.admin.addressChangeHand`` alone (no entry of the button, so no ``addressChangeConfirm``). ``new_url`` ""
+    removes the address (the sign-in then falls back to the request); anything else must pass
+    ``flow.clean_public_url`` (raises ``ValueError``). Apps call ``public_url_guard`` (their own route) or
+    ``save_public_url`` (the module's route), which ask with this."""
+    new = flow.clean_public_url(new_url) if new_url.strip() else ""
+    base = new or request_base.strip().rstrip("/")
+    old = flow.base_address(request_base)
+    entries = []
+    hand = 0
+    for entry in store.list_providers():
+        callback = flow.callback_path(entry.slug, entry.redirect_path)
+        target = base + callback if base else ""
+        if entry.managed == MANAGED_HAND:
+            hand += int(entry.enabled and bool(old) and old + callback != target)
+            continue
+        if entry.managed != MANAGED_AUTHENTIK:
+            continue
+        known = entry.registered_redirect or (old + callback if old else "")
+        if known and known != target:
+            entries.append({"slug": entry.slug, "label": entry.label, "registered": known, "redirect": target})
+    return {
+        "count": len(entries),
+        "entries": entries,
+        "address": entries[0]["registered"] if entries else "",
+        "hand": hand,
+    }
+
+
+def _remember_registered(store: Store, request_base: str) -> int:
+    """Before the public address changes: every entry of the button from before 1.0.10 (no ``registered_redirect``)
+    gets the redirect address it has today, the one the button registered with the address before. Then the
+    authentik card reports ``stale`` once the new address is saved. Only here, where the operator confirmed the
+    change: at start-up nothing is guessed. The number of entries filled."""
+    old = flow.base_address(request_base)
+    filled = 0
+    for entry in store.list_providers():
+        if entry.managed != MANAGED_AUTHENTIK or entry.registered_redirect or not old:
+            continue
+        known = old + flow.callback_path(entry.slug, entry.redirect_path)
+        store.update_provider(entry.id, providers.values_of(entry, registered_redirect=known))
+        filled += 1
+    if filled:
+        store.commit()
+        _log().info("redirect address of %s entries from before 1.0.10 noted before the address changed", filled)
+    return filled
+
+
+def public_url_guard(store: Store, new_url: str, request_base: str, *, confirm: bool) -> dict[str, Any] | None:
+    """For an app that saves the public address in a route of its own (card 1, or its own settings page): call it
+    before saving, with the address the operator typed. The question (``public_url_change``) while it asks: the
+    route answers 409 ``{"code": "public_url_change", **question}`` and saves nothing; the page asks with
+    ``oidc.admin.addressChangeConfirm`` when ``count`` and ``oidc.admin.addressChangeHand`` when ``hand`` (at least
+    one of the two) and sends again with ``confirm``. None: save now. With ``confirm`` the entries from before 1.0.10
+    get what authentik knows first (committed), so that the card reports ``stale`` afterwards. Raises ``ValueError``
+    for an address that is none."""
+    change = public_url_change(store, new_url, request_base)
+    if not change["count"] and not change["hand"]:
+        return None
+    if not confirm:
+        return change
+    _remember_registered(store, request_base)
+    return None
+
+
+class PublicUrlChange(Exception):
+    """``save_public_url`` asks first: ``question`` is ``public_url_change``'s answer; the route answers 409 with the
+    code ``public_url_change`` and it."""
+
+    def __init__(self, question: dict[str, Any]) -> None:
+        super().__init__("the public address changes what authentik knows; the operator has not confirmed it")
+        self.question = question
+
+
+class PublicUrlNotKept(Exception):
+    """The app could not store the address (no ``save_public_url``, its own check, its database)."""
+
+
+def _store_public_url(address: str) -> None:
+    """Store a clean address through ``AppConfig.save_public_url`` and read it back."""
+    save = config.current().save_public_url
+    if save is None:
+        raise PublicUrlNotKept(
+            f"the app cannot store a public address (no save_public_url); set {app_name().upper()}_PUBLIC_URL"
+        )
+    try:
+        save(address)
+    except Exception as error:
+        # Whatever keeps the app from storing it (its database, its own check).
+        raise PublicUrlNotKept(f"the app could not store the public address ({error.__class__.__name__})") from error
+    try:
+        kept = flow.clean_public_url(flow.configured_public_url())
+    except ValueError:
+        kept = ""
+    if kept != address:
+        raise PublicUrlNotKept("the app did not keep the public address")
+
+
+def save_public_url(store: Store, new_url: str, request_base: str, *, confirm: bool = False) -> dict[str, Any]:
+    """``POST <api>/oidc/authentik/address`` (``{"public_url", "confirm"}``): "Use it only" in the authentik card,
+    and card 1 of an app that has no route of its own for the address. Cleans the address (``ValueError``: 422
+    ``public_url_invalid``), asks like ``public_url_guard`` (``PublicUrlChange``: 409), stores it through
+    ``AppConfig.save_public_url`` and reads it back (``PublicUrlNotKept``: 409 ``public_url_needed``). Answers
+    ``address_view`` with the new address."""
+    address = flow.clean_public_url(new_url)
+    question = public_url_guard(store, address, request_base, confirm=confirm)
+    if question is not None:
+        raise PublicUrlChange(question)
+    _store_public_url(address)
+    _log().info("public address set to %s", address)
+    return address_view(store, request_base)
 
 
 # ---------------------------------------------------------------------------
@@ -717,8 +987,13 @@ entries:
 
 
 def blueprint_redirect(store: Store, request_base: str) -> str:
-    """The callback the blueprint names: that of the button's entry, else of the entry the button would make."""
-    managed = [entry for entry in store.list_providers() if entry.managed == MANAGED_AUTHENTIK]
-    if managed:
-        return flow.provider_redirect_uri(managed[0], request_base)
+    """The callback the blueprint names: that of the button's entry, else of the entry the button would make, behind
+    the app's public address. Without one it raises ``PublicUrlNeeded``: an address guessed from the request is
+    ``http`` behind a proxy that ends TLS, and a blueprint with it would fail at the first sign-in (Bauplan 03,
+    1.0.10). ``request_base`` is kept for the apps' calls; it is not used for the address."""
+    if not flow.configured_public_url():
+        raise PublicUrlNeeded("the app has no public address; the blueprint names no guessed one")
+    managed = _managed(store)
+    if managed is not None:
+        return flow.provider_redirect_uri(managed, request_base)
     return flow.redirect_uri(providers.free_slug(store, ENTRY_SLUG), request_base)

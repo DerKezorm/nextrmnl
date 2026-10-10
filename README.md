@@ -68,7 +68,9 @@ is at [nextrmnl.nexapps.dev](https://nextrmnl.nexapps.dev).
   provider) or, if the operator allows it per provider, as members. Per provider the operator decides whether
   it checks the second factor itself; if not, nextrmnl asks for its own code afterwards. For authentik there is
   a one-button setup that creates provider, application and signing key with a one-time API token, or a
-  blueprint file to do it without a token. Sign-in with a password can be turned off once a provider is on;
+  blueprint file to do it without a token. Without a public address the button proposes the one your browser
+  uses and registers it only after you confirm; changing the public address later asks first, because the
+  provider still knows the old return address. Sign-in with a password can be turned off once a provider is on;
   the operator always keeps the password.
 - **Backups**: consistent copies on a schedule and before every schema change, downloads as an AES encrypted
   ZIP that 7-Zip opens without nextrmnl, restore with a preview and a restart.
@@ -125,7 +127,7 @@ open with the account's password only. Both go into the backup archive.
 | `NEXTRMNL_SECRET_KEY` | created on first start | Protects the server-side secrets; when set, it wins over `secret.key` |
 | `NEXTRMNL_PUBLIC_URL` | from the request | The address people use to reach nextrmnl; for invitation links and the OIDC redirect. The public address under Settings, Sign-in wins when set |
 | `NEXTRMNL_LOG_LEVEL` | stored setting | `quiet`, `normal`, `detailed` or `trace`; overrides the setting, the emergency exit when the app does not start |
-| `NEXTRMNL_TRUSTED_PROXIES` | none | Addresses or networks of reverse proxies whose `X-Forwarded-For` is believed, comma separated (`172.18.0.0/16, 10.0.0.5`). Without it every request counts as coming from its peer, so a proxy in front makes all its clients share one sign-in brake |
+| `NEXTRMNL_TRUSTED_PROXIES` | none | Addresses or networks of reverse proxies whose `X-Forwarded-For` and `X-Forwarded-Proto` are believed, comma separated (`172.18.0.0/16, 10.0.0.5`). Without it every request counts as coming from its peer, so a proxy in front makes all its clients share one sign-in brake, and the sign-in settings warn that the server sees `http` behind a proxy that ends TLS |
 | `NEXTRMNL_SESSION_DAYS` | `14` | A browser session ends after this many days |
 | `NEXTRMNL_API_DOCS` | `false` | Serves `/api/docs` and `/api/openapi.json`; off by default |
 | `NEXTRMNL_COOKIE_SECURE` | `auto` | `on`, `off` or `auto` (from the request or `X-Forwarded-Proto`) |

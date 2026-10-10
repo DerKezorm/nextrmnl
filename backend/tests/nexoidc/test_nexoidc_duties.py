@@ -49,6 +49,7 @@ def test_operator_routes_refuse_a_browser_without_session_and_a_member(
             assert status in adapter.member_status, (method, path, status)
     # Nothing changed, and authentik was never asked.
     assert [item["slug"] for item in adapter.providers()] == ["sso"] and ak.calls == []
+    assert "intruder" not in adapter.read_public_url()
     with adapter.store() as store:
         assert len(store.links_of_account(owner)) == 1
 

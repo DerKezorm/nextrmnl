@@ -1,5 +1,7 @@
 /** What the server returns. Field names match the responses (snake_case). */
 
+import type { AuthentikAddress } from '../vendor/nexoidc/oidc'
+
 export type Role = 'operator' | 'member'
 export type SignIn = 'password' | 'oidc'
 export type VaultState = 'open' | 'locked' | 'unset'
@@ -399,6 +401,18 @@ export interface AuthentikResult {
   links_dropped: number
   /** With the reason `issuer_change`: how many accounts would have to link again. */
   count?: number
+  /** With the reason `public_url_needed`: what the card shows about the address. */
+  address?: AuthentikAddress
+  /** The address this run stored, when it did (it stays stored if a later step failed). */
+  public_url?: string
+}
+
+/** What the server asks before the public address changes: entries of the button (`count`, with the first
+ * `address`) and entries by hand (`hand`). */
+export interface AddressQuestion {
+  count: number
+  hand: number
+  address: string
 }
 
 /** A command an account keeps at hand; only its owner sees it. */

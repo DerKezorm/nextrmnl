@@ -18,6 +18,8 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
@@ -25,7 +27,18 @@ from sqlalchemy.orm import Session
 from .. import crypto
 from ..config import get_settings
 from ..db import SessionLocal
-from ..models import MEMBER, OPERATOR, SIGN_IN_OIDC, SIGN_IN_PASSWORD, Account, OidcLink, OidcProvider, Setting, utcnow
+from ..models import (
+    MEMBER,
+    OPERATOR,
+    SIGN_IN_OIDC,
+    SIGN_IN_PASSWORD,
+    Account,
+    AuthSession,
+    OidcLink,
+    OidcProvider,
+    Setting,
+    utcnow,
+)
 from ..models import Invite as InviteRow
 from ..vendor import nexoidc
 from ..vendor.nexoidc import (
@@ -35,7 +48,6 @@ from ..vendor.nexoidc import (
     Provider,
     ProviderValues,
     migrate,
-    protocol,
     secret_context,
 )
 from . import accounts, settings_service
@@ -58,6 +70,15 @@ def _public_url() -> str:
         return settings_service.public_url(db)
 
 
+def _save_public_url(url: str) -> None:
+    """The address the operator confirmed in the authentik card: stored in the setting Settings, Sign-in shows (the
+    setting wins over ``NEXTRMNL_PUBLIC_URL``) and committed at once. The same check as the settings page makes:
+    an address with a path is none here, and ``PublicUrlNotKept`` says so to the module."""
+    clean = settings_service.normalize_public_url(url)
+    with SessionLocal() as db:
+        settings_service.save(db, {"public_url": clean})
+
+
 def _server_secret() -> str:
     return get_settings().resolved_secret_key()
 
@@ -69,6 +90,7 @@ def configure() -> None:
             app_name=APP_NAME,
             server_secret=_server_secret,
             public_url=_public_url,
+            save_public_url=_save_public_url,
             login_page=LOGIN_PAGE,
             account_page=ACCOUNT_PAGE,
             home=HOME,
@@ -149,6 +171,7 @@ class SqlStore:
             position=row.position,
             redirect_path=row.redirect_path,
             created_at=row.created_at,
+            registered_redirect=row.registered_redirect or "",
         )
 
     def list_providers(self) -> list[Provider]:
@@ -171,6 +194,9 @@ class SqlStore:
             values.position,
         )
         row.redirect_path = values.redirect_path
+        if values.registered_redirect is not None:
+            # None keeps what the button registered last; only the button writes it.
+            row.registered_redirect = values.registered_redirect
 
     def insert_provider(self, values: ProviderValues) -> Provider:
         row = OidcProvider()
@@ -352,6 +378,38 @@ def linked_providers(db: Session) -> dict[int, list[dict[str, object]]]:
     return out
 
 
+def trusted_accounts(db: Session) -> set[int]:
+    """The accounts that are linked to an entry that is on and trusted with the second factor."""
+    rows = db.scalars(
+        select(OidcLink.account_id)
+        .join(OidcProvider, OidcProvider.id == OidcLink.provider_id)
+        .where(OidcProvider.enabled.is_(True), OidcProvider.trusts_second_factor.is_(True))
+    )
+    return set(rows)
+
+
+def withdraw_trust(db: Session, account_ids: set[int]) -> None:
+    """The browser sessions of these accounts no longer count as checked by a provider (``via_trusted_provider``):
+    the entry stopped being trusted, went off or away, or the account let go of it. They are held to the requirement
+    for a second factor again, as a sign-in with the password is."""
+    if account_ids:
+        db.execute(
+            update(AuthSession)
+            .where(AuthSession.account_id.in_(account_ids), AuthSession.via_trusted_provider.is_(True))
+            .values(via_trusted_provider=False)
+        )
+        db.commit()
+
+
+@contextmanager
+def watching_trust(db: Session) -> Iterator[None]:
+    """Around whatever can end the trust some sessions rest on: whoever was linked to a trusted entry before and is
+    not after loses the exemption of their sessions (see ``withdraw_trust``)."""
+    before = trusted_accounts(db)
+    yield
+    withdraw_trust(db, before - trusted_accounts(db))
+
+
 def link_count(db: Session, account_id: int) -> int:
     return int(db.scalar(select(func.count()).select_from(OidcLink).where(OidcLink.account_id == account_id)) or 0)
 
@@ -376,8 +434,6 @@ def note_unlinked(account: Account, label: str) -> None:
 
 # --- The migration from the single provider of the settings (blueprint 01 "Umstieg", 06 "Wanderung") --------------
 
-#: The settings of the single provider before the list. They stay readable for one version (the way back), then go.
-LEGACY_KEYS = ("oidc_issuer", "oidc_client_id", "oidc_client_secret_enc", "oidc_provider_name", "oidc_auto_create")
 #: Set once the settings were looked at: an operator who later removes every entry must not get the old provider
 #: back at the next start.
 MIGRATED = "oidc_list_migrated"
@@ -386,6 +442,10 @@ MIGRATED = "oidc_list_migrated"
 FINGERPRINT = "oidc_legacy_fingerprint"
 #: The version before the list asked no code of its own after the provider (blueprint 06 "Wanderung").
 TRUSTED_BEFORE = True
+#: The issuer the version before the list knows, as it wrote it, or ``migrate.CLOSED`` (blueprint 01 "Umstieg" 4):
+#: ``migrate.way_back`` decides from it and the entry ``oidc`` what the old settings show. The app stores it and
+#: never reads into it.
+ANCHOR = "oidc_legacy_anchor"
 
 
 def read_legacy(db: Session) -> tuple[migrate.Legacy, list[tuple[int, str]]]:
@@ -418,51 +478,37 @@ def legacy_plan(db: Session) -> migrate.Plan | None:
 
 
 def mirror_legacy(db: Session) -> None:
-    """The way back to nextrmnl 0.4 (blueprint 01 "Umstieg" 4): that version reads the old settings ``oidc_*`` and the
-    column ``oidc_subject``, so they must always describe the entry ``oidc`` exactly, or be empty. Otherwise going
-    back would bring a removed provider back, or let a subject into an account that gave it up.
-
-    - The entry ``oidc`` gone or its issuer changed: the old settings and every old subject are emptied for good.
-    - Else the old settings follow the entry: its client (only while it is on and the provider checks the second
-      factor itself; otherwise the old version finds no client and lets nobody in through it, as it would without the
-      code the new version asks), its name, ``auto_create`` only while the client is there; each account's old
-      subject is its link there, and an account without one has none. Switched on again, everything is back.
+    """The way back to nextrmnl 0.4 (blueprint 01 "Umstieg" 4), inside every commit that changes accounts, links or
+    the entry: that version reads the old settings ``oidc_*`` and the column ``oidc_subject``, so they must always
+    show what ``migrate.way_back`` gives for the entry ``oidc`` and the stored anchor (one rule for every app, see the
+    module). Otherwise going back would bring a removed provider back, or let a subject into an account that gave it
+    up. The issuer is written as the anchor holds it, letter by letter: the version before compares it that way.
 
     Last the fingerprint of what stands there, for ``migrate.resync`` at the next start. Nothing is committed here;
-    the store calls it before every commit."""
-    issuer = str(settings_service.get(db, "oidc_issuer") or "")
-    entry = db.scalar(select(OidcProvider).where(OidcProvider.slug == nexoidc.LEGACY_SLUG)) if issuer else None
-    if issuer and (entry is None or not protocol.same_issuer(entry.issuer, issuer)):
-        put_settings(db, {key: settings_service.DEFAULTS[key] for key in LEGACY_KEYS})
-        logger.info("The provider before the list is gone or another: its old settings and subjects are emptied")
-        entry = None
+    the store calls it before every commit, and so does every other way that changes accounts (deleting one:
+    ``routers/auth.delete_account``)."""
     db.flush()
-    if entry is None:
-        db.execute(update(Account).where(Account.oidc_subject != "").values(oidc_subject=""))
-        _remember_legacy(db)
-        return
-    rows = db.execute(select(OidcLink.account_id, OidcLink.subject).where(OidcLink.provider_id == entry.id))
-    linked = {account_id: subject for account_id, subject in rows}
-    for account in db.scalars(select(Account).where((Account.oidc_subject != "") | Account.id.in_(linked))):
-        wanted = linked.get(account.id, "")
+    store = SqlStore(db)
+    entry = store.provider_by_slug(nexoidc.LEGACY_SLUG)
+    links = [(link.account_id, link.subject) for link in store.links_of_provider(entry.id)] if entry else []
+    mirror = migrate.way_back(entry, links, str(settings_service.get(db, ANCHOR) or "") or None)
+    shown = mirror.legacy
+    changes: dict[str, object] = {
+        "oidc_issuer": shown.issuer,
+        "oidc_client_id": shown.client_id,
+        "oidc_provider_name": shown.label,
+        "oidc_auto_create": bool(shown.auto_create),
+        ANCHOR: mirror.anchor,
+    }
+    # Sealed afresh every time, so only when the secret itself differs.
+    if crypto.decrypt_secret(str(settings_service.get(db, "oidc_client_secret_enc") or "")) != shown.client_secret:
+        changes["oidc_client_secret_enc"] = crypto.encrypt_secret(shown.client_secret) if shown.client_secret else ""
+    put_settings(db, {key: value for key, value in changes.items() if settings_service.get(db, key) != value})
+    wanted_ids = list(mirror.subjects)
+    for account in db.scalars(select(Account).where((Account.oidc_subject != "") | Account.id.in_(wanted_ids))):
+        wanted = mirror.subjects.get(account.id, "")
         if account.oidc_subject != wanted:
             account.oidc_subject = wanted
-    usable = entry.enabled and entry.trusts_second_factor
-    client_id = entry.client_id if usable else ""
-    secret = crypto.decrypt_secret(entry.client_secret_enc, secret_context(entry.id)) if usable else ""
-    old_secret = crypto.decrypt_secret(str(settings_service.get(db, "oidc_client_secret_enc") or ""))
-    if str(settings_service.get(db, "oidc_client_id") or "") != client_id or old_secret != secret:
-        sealed = crypto.encrypt_secret(secret) if secret else ""
-        put_settings(db, {"oidc_client_id": client_id, "oidc_client_secret_enc": sealed})
-    shown = {"oidc_provider_name": entry.label, "oidc_auto_create": bool(entry.auto_create and usable)}
-    changed = {key: value for key, value in shown.items() if settings_service.get(db, key) != value}
-    if changed:
-        put_settings(db, changed)
-    _remember_legacy(db)
-
-
-def _remember_legacy(db: Session) -> None:
-    """The fingerprint of the old settings and subjects as they stand now (after the mirror wrote them)."""
     db.flush()
     legacy, subjects = read_legacy(db)
     put_settings(db, {FINGERPRINT: migrate.fingerprint(legacy, subjects)})
@@ -487,10 +533,11 @@ def migration_due(db: Session) -> bool:
 
 
 def _older_version_changed(db: Session) -> bool:
-    """The old settings or subjects differ from what the last mirror wrote: the version before the list was at work."""
+    """The old settings or subjects differ from what the last mirror wrote: the version before the list was at work.
+    Compared in the form the stored fingerprint has, so that one of module 1.0.9 asks for no backup of its own."""
     legacy, subjects = read_legacy(db)
     previous = str(settings_service.get(db, FINGERPRINT) or "") or None
-    return migrate.changes(previous, migrate.fingerprint(legacy, subjects)).any
+    return migrate.changes_since(previous, legacy, subjects).any
 
 
 def migrate_settings(*, backup: bool = True) -> Provider | None:
@@ -502,8 +549,9 @@ def migrate_settings(*, backup: bool = True) -> Provider | None:
 
     After that, at each start, what the version before the list changed in the old settings since the last mirror (an
     operator who went back and came up again) is taken over (``migrate.resync``), with a backup first when there is
-    something to take. Then the mirror and the fingerprint are written again, so that a start without a change in the
-    older version changes nothing. Returns the entry the first migration made, else None."""
+    something to take. Then the mirror, the anchor and the fingerprint are written again, always, also without any
+    provider: a provider the older version sets up later must be seen at the next start, not thrown away. Returns the
+    entry the first migration made, else None."""
     with SessionLocal() as db:
         due = migration_due(db)
         if not due and not settings_service.get(db, MIGRATED):
@@ -517,15 +565,30 @@ def migrate_settings(*, backup: bool = True) -> Provider | None:
     with SessionLocal() as db:
         store = SqlStore(db)
         entry = None
+        legacy, subjects = read_legacy(db)
+
+        def keep_anchor(value: str) -> None:
+            put_settings(db, {ANCHOR: value})
+
         if due and migration_due(db):
+            # The anchor first: the commit of the migration writes the way back and must already see it.
+            keep_anchor(migrate.anchor_of(legacy))
             entry = migrate.apply(store, legacy_plan(db))
             put_settings(db, {MIGRATED: True})
         else:
-            legacy, subjects = read_legacy(db)
             previous = str(settings_service.get(db, FINGERPRINT) or "") or None
-            done = migrate.resync(store, legacy, subjects, previous=previous, trusts_second_factor=TRUSTED_BEFORE)
+            with watching_trust(db):
+                done = migrate.resync(
+                    store,
+                    legacy,
+                    subjects,
+                    previous=previous,
+                    trusts_second_factor=TRUSTED_BEFORE,
+                    anchor=str(settings_service.get(db, ANCHOR) or "") or None,
+                    keep_anchor=keep_anchor,
+                )
             if done.wrote:
                 logger.info("Sign-in settings of the older version taken over")
-        # Through the store: the mirror and the new fingerprint are written in the same commit.
+        # Through the store: the mirror, the anchor and the new fingerprint are written in the same commit.
         store.commit()
         return entry

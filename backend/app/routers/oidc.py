@@ -28,8 +28,10 @@ Paths (all below ``/api/oidc``):
 | GET | ``/me`` | signed in: every active entry with ``linked`` |
 | POST, DELETE | ``/{slug}/link`` | signed in: link (``{"password"}`` gives ``{"url"}``), unlink |
 | DELETE | ``/admin/accounts/{account}/links/{provider}`` | operator, with the own password |
-| POST | ``/authentik/setup`` | operator: ``{"url", "token"}`` gives always 200 with the steps |
-| GET | ``/authentik/blueprint`` | operator: ``nextrmnl-authentik.yaml`` |
+| POST | ``/authentik/setup`` | operator: ``{"url", "token", "confirm_issuer_change", "public_url"}`` gives always 200 |
+| GET | ``/authentik/address`` | operator: what the authentik card shows about the public address |
+| POST | ``/authentik/address`` | operator: ``{"public_url", "confirm"}`` saves it ("Use it only"); 409 asks first |
+| GET | ``/authentik/blueprint`` | operator: ``nextrmnl-authentik.yaml``; without a public address 409 |
 """
 
 from __future__ import annotations
@@ -51,7 +53,15 @@ from pydantic import BaseModel, Field
 
 from ..config import get_settings
 from ..db import SessionLocal
-from ..deps import CurrentAccount, OperatorAccount, client_ip, reauth_failed, reauth_guard, reauth_succeeded
+from ..deps import (
+    CurrentAccount,
+    OperatorAccount,
+    client_ip,
+    reauth_failed,
+    reauth_guard,
+    reauth_succeeded,
+    request_base,
+)
 from ..meldungen import fehler
 from ..models import SIGN_IN_PASSWORD, Account
 from ..security import SESSION_COOKIE, brake, end_all_sessions, session_account, start_session
@@ -99,6 +109,14 @@ class SetupIn(BaseModel):
     token: str = Field(min_length=1, max_length=2000)
     #: The operator said yes to the question after ``reason: issuer_change``.
     confirm_issuer_change: bool = False
+    #: The address the operator confirmed in the card (the browser's own) while nextrmnl has none yet.
+    public_url: str = Field(default="", max_length=600)
+
+
+class AddressIn(BaseModel):
+    public_url: str = Field(max_length=600)
+    #: The operator confirmed ``oidc.admin.addressChangeConfirm``.
+    confirm: bool = False
 
 
 class OrderIn(BaseModel):
@@ -112,7 +130,8 @@ def store() -> Iterator[SqlStore]:
 
 
 def _base(request: Request) -> str:
-    return str(request.base_url)
+    # The scheme from a proxy nextrmnl trusts (NEXTRMNL_TRUSTED_PROXIES), never from just any sender.
+    return request_base(request)
 
 
 def _redirect(target: flow.Redirect, request: Request) -> RedirectResponse:
@@ -229,7 +248,8 @@ async def save_provider(
 ) -> dict[str, Any]:
     with store() as s:
         try:
-            saved, dropped = await providers.update(s, provider_id, providers.Form(**payload.model_dump()))
+            with oidc_store.watching_trust(s.db):
+                saved, dropped = await providers.update(s, provider_id, providers.Form(**payload.model_dump()))
         except ProviderInvalid as exc:
             raise _form_error(exc) from exc
         logger.info("OIDC provider %s saved by=%s", saved.slug, operator.name)
@@ -255,7 +275,8 @@ def provider_impact(
 def remove_provider(provider_id: Annotated[int, Path(ge=1, le=2**31)], operator: OperatorAccount) -> dict[str, Any]:
     with store() as s:
         try:
-            impact = providers.remove(s, provider_id)
+            with oidc_store.watching_trust(s.db):
+                impact = providers.remove(s, provider_id)
         except ProviderInvalid as exc:
             raise _form_error(exc) from exc
     logger.info("OIDC provider %s removed by=%s", provider_id, operator.name)
@@ -414,7 +435,8 @@ def unlink(slug: Annotated[str, Path(max_length=40)], account: CurrentAccount) -
         if entry is None:
             raise fehler("oidc_not_configured", "This provider is not set up.", 404)
         try:
-            oidc_accounts.unlink(s, account.id, entry.id)
+            with oidc_store.watching_trust(s.db):
+                oidc_accounts.unlink(s, account.id, entry.id)
         except OidcError as exc:
             raise fehler(exc.code, exc.message, 409) from exc
 
@@ -479,17 +501,56 @@ def operator_unlink(
 async def authentik_setup(payload: SetupIn, operator: OperatorAccount, request: Request) -> dict[str, Any]:
     # Always 200 with the steps that ran, a failed one included: the page says why in the operator's language.
     logger.info("authentik setup started by=%s", operator.name)
-    with store() as s:
+    with store() as s, oidc_store.watching_trust(s.db):
         result = await authentik.setup(
-            s, payload.url, payload.token, _base(request), confirm_issuer_change=payload.confirm_issuer_change
+            s,
+            payload.url,
+            payload.token,
+            _base(request),
+            confirm_issuer_change=payload.confirm_issuer_change,
+            public_url=payload.public_url,
+            headers=request.headers,
         )
     return result.as_dict()
+
+
+@router.get("/authentik/address", summary="What the authentik card shows about the public address")
+def authentik_address(_operator: OperatorAccount, request: Request) -> dict[str, Any]:
+    with store() as s:
+        return authentik.address_view(s, _base(request), request.headers)
+
+
+@router.post("/authentik/address", summary="Save the public address (the card's \"Use it only\"); asks first")
+def authentik_save_address(payload: AddressIn, operator: OperatorAccount, request: Request) -> dict[str, Any]:
+    """Saving the address changes what authentik has to know: while an entry of the button still has the old one
+    registered (or an entry by hand is on), the answer is 409 ``public_url_change`` with the numbers, and nothing is
+    saved until the operator confirms. The settings page asks the same before it saves the address."""
+    with store() as s:
+        try:
+            view = authentik.save_public_url(s, payload.public_url, _base(request), confirm=payload.confirm)
+        except ValueError as error:
+            raise fehler("public_url_invalid", "That is not an address people could reach nextrmnl at.", 422) from error
+        except authentik.PublicUrlChange as asked:
+            raise _address_question(asked.question) from asked
+        except authentik.PublicUrlNotKept as error:
+            raise fehler("public_url_needed", "The address could not be stored.", 409) from error
+    logger.info("Public address saved by=%s", operator.name)
+    return view
+
+
+def _address_question(question: dict[str, Any]) -> Exception:
+    """The 409 that asks before the public address changes (the numbers of ``public_url_change``)."""
+    return fehler("public_url_change", "The public address changes what the sign-in providers know.", 409, **question)
 
 
 @router.get("/authentik/blueprint", summary="Download a blueprint that creates the same objects in authentik")
 def authentik_blueprint(_operator: OperatorAccount, request: Request) -> Response:
     with store() as s:
-        text = authentik.blueprint(authentik.blueprint_redirect(s, _base(request)))
+        try:
+            redirect = authentik.blueprint_redirect(s, _base(request))
+        except authentik.PublicUrlNeeded as error:
+            raise fehler("public_url_needed", "Save the public address first.", 409) from error
+        text = authentik.blueprint(redirect)
     return Response(
         content=text,
         media_type="application/yaml",

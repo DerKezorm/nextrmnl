@@ -335,6 +335,9 @@ def delete_account(account_id: int, operator: OperatorAccount, db: DbSession) ->
     vault.lock(row.id)
     end_ssh_sessions(row.id, "signed_out")
     db.delete(row)
+    # The links of the account go with it; the way back to the version before the list and its fingerprint must see
+    # that in the same commit, or the next start takes the change for the older version's (a backup for nothing).
+    oidc_store.mirror_legacy(db)
     db.commit()
 
 

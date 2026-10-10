@@ -244,8 +244,15 @@ def test_30_another_authentik_asks_first_and_the_route_takes_the_confirmation(
 def test_32_the_blueprint_makes_the_same_objects_with_grant_types_and_the_callback(
     adapter: Any, ak: fakes.FakeAuthentik
 ) -> None:
+    # Without a public address the blueprint names none guessed from the request (1.0.10): 409, and the card offers
+    # the browser's address first.
+    refused = adapter.blueprint()
+    assert refused.status_code == 409 and adapter.error_code(refused) == "public_url_needed"
+    assert "redirect_uris" not in refused.text
+    adapter.set_public_url("https://app.example.org")
     response = adapter.blueprint()
     assert response.status_code == 200
+    assert '"https://app.example.org/' in response.text and "http://testserver" not in response.text
     name = adapter_app(adapter)
     assert f'filename="{name}-authentik.yaml"' in response.headers["content-disposition"]
     text = response.text

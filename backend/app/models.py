@@ -153,6 +153,9 @@ class OidcProvider(Base):
     position: Mapped[int] = mapped_column(Integer, default=0)
     #: A callback path the provider knew before (only a migration sets it); "" is the standard one.
     redirect_path: Mapped[str] = mapped_column(String(300), default="")
+    #: The redirect address the authentik button registered last; "" for an entry by hand or one the button made
+    #: before the module kept it. Only the button writes it (``ProviderValues.registered_redirect``).
+    registered_redirect: Mapped[str] = mapped_column(String(500), default="", server_default="")
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow)
 
 

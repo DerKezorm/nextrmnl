@@ -34,13 +34,15 @@ def test_32_the_blueprints_callback_entered_by_hand_signs_in_and_the_button_take
     adapter: Any, oidc: Any, net: fakes.Network
 ) -> None:
     ak = net.add(fakes.FakeAuthentik())
+    # The blueprint names a redirect address behind the public address only (1.0.10).
+    adapter.set_public_url(adapter.origin)
     blueprint = adapter.blueprint()
     assert blueprint.status_code == 200
     app = oidc.current().app_name
     callback = f"/{adapter.api.strip('/')}/oidc/authentik/callback"
     assert callback in blueprint.text
     # As if the operator applied the blueprint: provider and application with the plain names.
-    made = ak.add_provider(app, "http://testserver" + callback, slug=app)
+    made = ak.add_provider(app, adapter.origin + callback, slug=app)
     issuer = f"{ak.base}/application/o/{app}/"
     signer = ak.sign_in_with(issuer, made["client_id"], made["client_secret"])
     if adapter.only_authentik:

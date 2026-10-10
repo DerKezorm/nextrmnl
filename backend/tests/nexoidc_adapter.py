@@ -156,6 +156,16 @@ class Adapter(StandardAdapter):
         with SessionLocal() as db:
             settings_service.save(db, {"public_url": url})
 
+    def read_public_url(self) -> str:
+        # From the database, as a restart would find it.
+        with SessionLocal() as db:
+            return settings_service.public_url(db)
+
+    def save_public_url_route(self, url: str, *, confirm: bool = False) -> httpx.Response:
+        # nextrmnl saves the address on the settings page (Settings, Sign-in, card 1), a route of its own: it asks
+        # ``authentik.public_url_guard`` first and answers 409 ``public_url_change``, saving nothing.
+        return self.operator().put("/api/settings", json={"public_url": url, "public_url_confirm": confirm})
+
     def legacy_setup(
         self, *, issuer: str, client_id: str, client_secret: str, label: str, subjects: dict[str, str]
     ) -> None:
@@ -192,8 +202,18 @@ class Adapter(StandardAdapter):
             "client_id": legacy.client_id,
             "client_secret": legacy.client_secret,
             "label": legacy.label,
+            "auto_create": legacy.auto_create,
             "subjects": {names[account_id]: subject for account_id, subject in subjects},
         }
+
+    def delete_account(self, name: str) -> None:
+        # The operator's own route, as the account list calls it.
+        with SessionLocal() as db:
+            row = accounts.by_name(db, name)
+            assert row is not None
+            account_id = row.id
+        answer = self.operator().delete(f"/api/accounts/{account_id}")
+        assert answer.status_code == 204, answer.text
 
     def trip_throttle(self, client: Any) -> None:
         # As many failed runs at the provider from this sender as the brake lets pass (every TestClient is the

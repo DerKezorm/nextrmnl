@@ -52,6 +52,9 @@ class StandardAdapter:
     home = "/"
     login_page = "/login"
     account_page = "/account"
+    #: The address the test browser uses (``browser()``'s ``base_url``, with the app's base path if it has one): what
+    #: the authentik card suggests as the public address when the app has none (since 1.0.10).
+    origin = "http://testserver"
 
     def __init__(self) -> None:
         self.passwords: dict[str, str] = {}
@@ -113,6 +116,11 @@ class StandardAdapter:
         """APP: the public address of the app (setting)."""
         raise NotImplementedError
 
+    def read_public_url(self) -> str:
+        """APP (since 1.0.10): the public address as the app's setting holds it now, "" for none (what
+        ``AppConfig.save_public_url`` stored)."""
+        raise NotImplementedError
+
     def legacy_setup(
         self, *, issuer: str, client_id: str, client_secret: str, label: str, subjects: dict[str, str]
     ) -> None:
@@ -129,7 +137,13 @@ class StandardAdapter:
     def legacy_read(self) -> dict[str, Any]:
         """APP (legacy_model "single", since 1.0.9): the old settings and ``oidc_subject`` as the app has them now
         (what the version before the list would find): ``issuer``, ``client_id``, ``client_secret`` (decrypted),
-        ``label`` and ``subjects`` (account name to subject, accounts without one left out)."""
+        ``label``, ``auto_create`` (bool, since 1.0.10) and ``subjects`` (account name to subject, accounts without
+        one left out)."""
+        raise NotImplementedError
+
+    def delete_account(self, name: str) -> None:
+        """APP (legacy_model "single" with more than one account, since 1.0.10): delete the account ``name`` the way
+        the app does it (its own service or route, not the store), committed."""
         raise NotImplementedError
 
     # --- standard routes (override when the app differs) ------------------------------------------------------------
@@ -149,6 +163,7 @@ class StandardAdapter:
             "me": f"{api}/oidc/me",
             "link": f"{api}/oidc/{values.get('slug')}/link",
             "setup": f"{api}/oidc/authentik/setup",
+            "address": f"{api}/oidc/authentik/address",
             "blueprint": f"{api}/oidc/authentik/blueprint",
             "order": f"{api}/oidc/admin/providers/order",
             "operator_unlink": f"{api}/oidc/admin/accounts/{values.get('account')}/links/{values.get('provider')}",
@@ -195,11 +210,51 @@ class StandardAdapter:
     def unlink(self, client: Any, slug: str) -> httpx.Response:
         return client.delete(self.path("link", slug=slug))
 
-    def setup_authentik(self, url: str, token: str, *, confirm_issuer_change: bool = False) -> httpx.Response:
+    def setup_authentik(
+        self,
+        url: str,
+        token: str,
+        *,
+        confirm_issuer_change: bool = False,
+        public_url: str | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> httpx.Response:
+        """The button as the card presses it. ``public_url`` None: the card's "Use it and set up", which sends the
+        browser's own address (``origin``; the server takes it only while the app has none); "": nothing confirmed."""
         body: dict[str, Any] = {"url": url, "token": token}
         if confirm_issuer_change:
             body["confirm_issuer_change"] = True
-        return self.operator().post(self.path("setup"), json=body)
+        confirmed = self.origin if public_url is None else public_url
+        if confirmed:
+            body["public_url"] = confirmed
+        return self.operator().post(self.path("setup"), json=body, headers=headers or {})
+
+    def adopt_only(self, url: str, *, confirm: bool = False) -> httpx.Response:
+        """The card's "Use it only": the module's route ``POST <api>/oidc/authentik/address`` (since
+        1.0.10). 200 saved (``address_view``), 409 ``public_url_change`` asks first, 422 ``public_url_invalid``."""
+        body: dict[str, Any] = {"public_url": url}
+        if confirm:
+            body["confirm"] = True
+        return self.operator().post(self.path("address"), json=body)
+
+    def save_public_url_route(self, url: str, *, confirm: bool = False) -> httpx.Response:
+        """APP if card 1 (or another settings page of the app) saves the public address in a route of its own (since
+        1.0.10): save ``url`` there as the operator does, ``confirm`` after ``oidc.admin.addressChangeConfirm``. That
+        route asks ``authentik.public_url_guard`` first and answers its question with 409, code
+        ``public_url_change`` (``error_code``) and the question's fields (``error_detail``: ``count``, ``address``,
+        ``hand``), saving nothing. Standard: the module's route (``adopt_only``)."""
+        return self.adopt_only(url, confirm=confirm)
+
+    def error_detail(self, response: httpx.Response) -> dict[str, Any]:
+        """The fields of a refused JSON request beside its code. Standard: ``{"detail": {...}}``."""
+        detail = response.json().get("detail")
+        return detail if isinstance(detail, dict) else {}
+
+    def address(self, headers: dict[str, str] | None = None) -> dict[str, Any]:
+        """What the authentik card shows about the public address (``authentik.address_view``)."""
+        response = self.operator().get(self.path("address"), headers=headers or {})
+        assert response.status_code == 200, response.text
+        return response.json()
 
     def blueprint(self) -> httpx.Response:
         return self.operator().get(self.path("blueprint"))
@@ -228,6 +283,8 @@ class StandardAdapter:
             ("GET", self.path("impact", id=provider_id), None),
             ("PUT", self.path("order"), {"ids": [provider_id]}),
             ("POST", self.path("setup"), {"url": "https://auth.example.com", "token": "t"}),
+            ("GET", self.path("address"), None),
+            ("POST", self.path("address"), {"public_url": "https://intruder.example.com"}),
             ("GET", self.path("blueprint"), None),
             ("DELETE", self.path("operator_unlink", account=account_id, provider=provider_id), {"password": "x"}),
         ]

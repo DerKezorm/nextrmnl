@@ -297,9 +297,14 @@ def public_list(store: Store) -> list[dict[str, str]]:
 
 
 def admin_view(provider: Provider, request_base: str, link_count: int, *, coupled: bool = False) -> dict[str, object]:
-    """An entry as the operator's list and form show it: never the secret, only whether one is stored."""
+    """An entry as the operator's list and form show it: never the secret, only whether one is stored.
+
+    ``registered_redirect_uri`` is what the authentik button registered at authentik for this entry ("" for none),
+    ``redirect_stale`` whether that is no longer the redirect address the sign-in sends (the public address changed
+    since): the authentik card then shows ``oidc.authentik.stale`` until the button ran again (since 1.0.10)."""
     from .flow import provider_redirect_uri
 
+    redirect = provider_redirect_uri(provider, request_base)
     return {
         "id": provider.id,
         "slug": provider.slug,
@@ -313,7 +318,9 @@ def admin_view(provider: Provider, request_base: str, link_count: int, *, couple
         "trusts_second_factor": provider.trusts_second_factor,
         "managed": provider.managed,
         "position": provider.position,
-        "redirect_uri": provider_redirect_uri(provider, request_base),
+        "redirect_uri": redirect,
+        "registered_redirect_uri": provider.registered_redirect,
+        "redirect_stale": bool(provider.registered_redirect) and provider.registered_redirect != redirect,
         "links": link_count,
         # Bauplan 06: while coupled, the whole list is read-only (the set-aside entries show as "off"); the entry of
         # the coupling never changes through the form.

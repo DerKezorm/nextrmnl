@@ -10,6 +10,7 @@ Only for apps that kept one provider in their settings (``legacy_model == "singl
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import oidc_contract
@@ -155,29 +156,56 @@ def test_22_up_again_a_subject_that_moved_or_swapped_is_taken_over_in_any_order_
     assert location(response) == adapter.home and adapter.who(browser) == "bob"
 
 
-def test_22_the_old_settings_are_empty_while_the_entry_is_off_or_does_not_trust_the_provider(
-    adapter: Any, sso: fakes.FakeProvider, oidc: Any
-) -> None:
-    """The way back writes the entry exactly, or nothing: the version before the list knows neither switch, and would
-    let a person in without the second factor the new version asks."""
-    if not _one_provider(adapter):
-        return
-    migrated(adapter, sso)
-    full = {
-        "issuer": sso.issuer.rstrip("/"),
+#: What the version before the list finds when the way back is closed (rule 3): no provider and no subject.
+CLOSED = {"issuer": "", "client_id": "", "client_secret": "", "label": "", "auto_create": False, "subjects": {}}
+
+
+def found(adapter: Any, *, like: dict[str, Any] = CLOSED) -> dict[str, Any]:
+    """What the version before the list finds now, in the keys of ``like``."""
+    read = adapter.legacy_read()
+    return {key: read[key] for key in like}
+
+
+def in_full(adapter: Any, sso: fakes.FakeProvider, **changes: Any) -> dict[str, Any]:
+    """Rule 1: the entry ``oidc`` of ``migrated`` in full, as the version before the list finds it."""
+    return {
+        # As the version before the list wrote it (``older``), not the entry's form (since 1.0.11).
+        "issuer": sso.issuer.strip(),
         "client_id": sso.client_id,
         "client_secret": sso.client_secret,
         "label": "Company",
+        "auto_create": False,
+        "subjects": {"alex": "person-1"},
+        **changes,
     }
 
-    def settings() -> dict[str, str]:
-        read = adapter.legacy_read()
-        return {key: read[key] for key in full}
 
+def set_issuer(adapter: Any, oidc: Any, issuer: str) -> None:
+    """The new version changes the issuer of the entry ``oidc``, as the form does after its discovery."""
+    with adapter.store() as store:
+        entry = store.provider_by_slug("oidc")
+        oidc.providers.change_issuer(store, entry, issuer)
+        store.update_provider(entry.id, oidc.providers.values_of(entry, issuer=issuer))
+        store.commit()
+
+
+def test_22_rules_1_and_2_in_full_while_on_and_trusted_else_issuer_name_and_subjects_without_a_client(
+    adapter: Any, sso: fakes.FakeProvider, oidc: Any
+) -> None:
+    """Rule 1: the entry in full while it is on and the provider checks the second factor. Rule 2: off, or not
+    trusted, the issuer and the name stay, client id and secret are empty, "new people" off, the subjects stay. The
+    version before the list knows neither switch: without a client it lets nobody in; if it sets another issuer up,
+    its own comparison drops the old subjects; on again brings everything back (nexcanvas finding 2, 10.10.2026)."""
+    if not _one_provider(adapter):
+        return
+    migrated(adapter, sso)
+    many = not adapter.single_account
     # An app whose older version asked the code (nexdiary, nexpaper) migrated to an entry that does not trust the
     # provider; trusted, its settings are written in full.
-    change_entry(adapter, oidc, trusts_second_factor=True)
-    assert settings() == full and adapter.legacy_read()["subjects"] == {"alex": "person-1"}
+    change_entry(adapter, oidc, trusts_second_factor=True, auto_create=many)
+    full = in_full(adapter, sso, auto_create=many)
+    assert found(adapter, like=full) == full
+    without = {**full, "client_id": "", "client_secret": "", "auto_create": False}
     for values in (
         {"trusts_second_factor": False},
         {"enabled": False},
@@ -185,10 +213,193 @@ def test_22_the_old_settings_are_empty_while_the_entry_is_off_or_does_not_trust_
     ):
         change_entry(adapter, oidc, **values)
         for _ in range(2):
-            assert not settings()["issuer"] or not settings()["client_id"], values
+            assert found(adapter, like=full) == without, values
             adapter.run_migration()
         change_entry(adapter, oidc, enabled=True, trusts_second_factor=True)
-        assert settings() == full, values
+        assert found(adapter, like=full) == full, values
+
+
+def test_22_rule_3_an_issuer_changed_here_closes_the_way_back_for_good_until_the_older_version_sets_one_up(
+    adapter: Any, sso: fakes.FakeProvider, oidc: Any
+) -> None:
+    """Another issuer at the entry than the one the version before the list knows: it finds nothing, not the new
+    issuer, or its bridge over a confirmed address would sign anyone in as an account without a subject, and its
+    "new people" would let strangers in (nexcanvas finding 1, nextasks finding 1). For good: through starts, off and
+    on, a link made here, and the issuer set back. Rule 4: only a provider the older version sets up opens it."""
+    if not _one_provider(adapter):
+        return
+    ids = migrated(adapter, sso)
+    change_entry(adapter, oidc, auto_create=not adapter.single_account)
+    set_issuer(adapter, oidc, "https://other.example.com")
+    assert found(adapter) == CLOSED
+    adapter.run_migration()
+    assert found(adapter) == CLOSED
+    change_entry(adapter, oidc, enabled=False)
+    change_entry(adapter, oidc, enabled=True)
+    with adapter.store() as store:
+        entry = store.provider_by_slug("oidc")
+        store.add_link(oidc.Link(provider_id=entry.id, subject="other-1", account_id=ids["alex"], issuer="x"))
+        store.commit()
+    assert found(adapter) == CLOSED
+    # A subject the older version writes without a provider names nobody at the entry.
+    older(adapter, sso, subjects={"alex": "person-5"}, issuer="", client_id="", client_secret="", label="")
+    adapter.run_migration()
+    assert "person-5" not in linked(adapter).values()
+    assert found(adapter) == CLOSED
+    set_issuer(adapter, oidc, sso.issuer)
+    adapter.run_migration()
+    assert found(adapter) == CLOSED
+    older(adapter, sso, subjects={"alex": "person-1"}, label="Again")
+    adapter.run_migration()
+    entry = the_entry(adapter)
+    assert (entry.label, entry.enabled) == ("Again", True)
+    assert linked(adapter) == {"alex": "person-1"}
+    assert found(adapter, like=in_full(adapter, sso)) == in_full(adapter, sso, label="Again")
+
+
+def test_22_rule_3_an_entry_removed_here_stays_closed_also_for_a_new_entry_oidc(
+    adapter: Any, sso: fakes.FakeProvider, oidc: Any
+) -> None:
+    if not _one_provider(adapter):
+        return
+    migrated(adapter, sso)
+    with adapter.store() as store:
+        store.delete_provider(store.provider_by_slug("oidc").id)
+        store.commit()
+    assert found(adapter) == CLOSED
+    old = oidc.migrate.Legacy(issuer=sso.issuer, client_id=sso.client_id, client_secret=sso.client_secret)
+    with adapter.store() as store:
+        store.insert_provider(oidc.migrate.plan(old, [], trusts_second_factor=True).provider)
+        store.commit()
+    for _ in range(2):
+        assert found(adapter) == CLOSED
+        adapter.run_migration()
+    assert the_entry(adapter) is not None
+
+
+def test_22_rule_2_on_again_is_no_change_and_a_provider_removed_in_the_older_version_while_off_takes_the_entry(
+    adapter: Any, sso: fakes.FakeProvider, oidc: Any
+) -> None:
+    """Off here, the issuer stays (rule 2): starts change nothing, and on again is the new version's own doing, no
+    change of the older one. Off, and "remove the provider" there: since 1.0.10 the fingerprint keeps the issuer
+    alone, so that is seen, and it does what removing does everywhere: the entry goes with its links, the way back
+    closes (nexbrand finding 2, nextrmnl and nexsift finding M-2)."""
+    if not _one_provider(adapter):
+        return
+    migrated(adapter, sso)
+    change_entry(adapter, oidc, enabled=False, trusts_second_factor=True)
+    adapter.run_migration()
+    change_entry(adapter, oidc, enabled=True)
+    adapter.run_migration()
+    entry = the_entry(adapter)
+    assert entry is not None and entry.enabled is True and linked(adapter) == {"alex": "person-1"}
+    assert found(adapter, like=in_full(adapter, sso)) == in_full(adapter, sso)
+    change_entry(adapter, oidc, enabled=False)
+    adapter.run_migration()
+    assert the_entry(adapter) is not None and linked(adapter) == {"alex": "person-1"}
+    older(adapter, sso, subjects={"alex": "person-1"}, issuer="", client_id="", client_secret="", label="")
+    adapter.run_migration()
+    assert the_entry(adapter) is None and linked(adapter) == {}
+    assert found(adapter) == CLOSED
+
+
+def test_22_the_issuer_stays_as_the_older_version_wrote_it_letter_by_letter(
+    adapter: Any, sso: fakes.FakeProvider, oidc: Any
+) -> None:
+    """Most versions before the list compare their issuer setting letter by letter when a provider is saved
+    (nexcanvas, nextasks, nexbrand, nextrmnl, nexsift, nexcrate), and their authentik button writes it with a slash.
+    Written back without one, the next press of that button there took it for another provider and dropped every
+    subject. So the way back writes the issuer the older version knows, character by character: after the
+    migration, through off and on, a save here and a start; the entry keeps its own form (since 1.0.11)."""
+    if not _one_provider(adapter):
+        return
+    bare = sso.issuer.strip().rstrip("/")
+    slashed = bare + "/"
+    adapter.make_account("alex")
+    older(adapter, sso, subjects={"alex": "person-1"}, issuer=slashed)
+    adapter.run_migration()
+    assert the_entry(adapter).issuer == bare
+
+    def issuer_there() -> str:
+        return adapter.legacy_read()["issuer"]
+
+    assert issuer_there() == slashed
+    for values in ({"enabled": False}, {"enabled": True}, {"label": "Renamed"}, {"trusts_second_factor": False}):
+        change_entry(adapter, oidc, **values)
+        assert issuer_there() == slashed, values
+        adapter.run_migration()
+        assert issuer_there() == slashed, values
+    change_entry(adapter, oidc, trusts_second_factor=True, label="Company")
+    assert found(adapter, like=in_full(adapter, sso)) == in_full(adapter, sso, issuer=slashed)
+    browser, response = oidc_contract.round_trip(adapter, sso, "oidc", legacy=True)
+    assert location(response) == adapter.home and adapter.who(browser) == "alex"
+    # The older version's form writes it without the slash: that text from now on, and the links stay.
+    older(adapter, sso, subjects={"alex": "person-1"}, issuer=bare, label="Form")
+    adapter.run_migration()
+    change_entry(adapter, oidc, enabled=False)
+    change_entry(adapter, oidc, enabled=True)
+    assert issuer_there() == bare and linked(adapter) == {"alex": "person-1"}
+    # Its button writes it with the slash again, with another name (taken over) and then alone (no change at all in
+    # the fingerprint): the way back follows both times, through a start and a save here.
+    for issuer, label in ((slashed, "authentik"), (bare, "authentik"), (slashed, "authentik")):
+        older(adapter, sso, subjects={"alex": "person-1"}, issuer=issuer, label=label)
+        adapter.run_migration()
+        change_entry(adapter, oidc, enabled=True)
+        assert issuer_there() == issuer and linked(adapter) == {"alex": "person-1"}, issuer
+
+
+class _Lines(logging.Handler):
+    def __init__(self) -> None:
+        super().__init__(logging.DEBUG)
+        self.lines: list[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.lines.append(record.getMessage())
+
+
+def test_22_every_commit_writes_the_way_back_also_when_an_account_is_deleted(
+    adapter: Any, sso: fakes.FakeProvider, oidc: Any
+) -> None:
+    """Every commit that changes accounts, links or the entry writes the way back and its fingerprint, also one that
+    goes around the store (deleting an account): else the next start takes the stale fingerprint for a change of the
+    older version (a line in the log, a backup for nothing; nextrmnl and nexsuite, 10.10.2026)."""
+    if not _one_provider(adapter) or adapter.single_account:
+        return
+    migrated(adapter, sso, bob="person-2")
+    assert linked(adapter) == {"alex": "person-1", "bob": "person-2"}
+    adapter.delete_account("bob")
+    # Straight to the next start: no other commit in between that would write the fingerprint anew.
+    lines = _Lines()
+    logger = logging.getLogger(oidc.config.current().log_name)
+    logger.addHandler(lines)
+    try:
+        adapter.run_migration()
+    finally:
+        logger.removeHandler(lines)
+    assert not [line for line in lines.lines if "took over" in line], lines.lines
+    assert linked(adapter) == {"alex": "person-1"} and adapter.legacy_read()["subjects"] == {"alex": "person-1"}
+
+
+def test_22_a_start_without_any_provider_stores_the_fingerprint_so_one_set_up_later_in_the_older_version_comes_in(
+    adapter: Any, sso: fakes.FakeProvider
+) -> None:
+    """The first start finds no provider, nothing to migrate: the fingerprint ("no provider") is stored all the same,
+    or the next start could not tell that the older version set one up since, and its mirror would throw it away
+    (nexbrand finding 1)."""
+    if not _one_provider(adapter):
+        return
+    adapter.make_account("alex")
+    adapter.run_migration()
+    assert found(adapter) == CLOSED and the_entry(adapter) is None
+    adapter.run_migration()
+    older(adapter, sso, subjects={"alex": "person-1"})
+    adapter.run_migration()
+    entry = the_entry(adapter)
+    assert entry is not None and entry.enabled and entry.label == "Company"
+    assert linked(adapter) == {"alex": "person-1"}
+    assert found(adapter, like=in_full(adapter, sso)) == in_full(adapter, sso)
+    browser, response = oidc_contract.round_trip(adapter, sso, "oidc", legacy=True)
+    assert location(response) == adapter.home and adapter.who(browser) == "alex"
 
 
 def test_22_up_again_a_provider_the_older_version_removed_is_gone(adapter: Any, sso: fakes.FakeProvider) -> None:
@@ -287,7 +498,7 @@ def test_22_up_again_nothing_is_taken_over_while_coupled(adapter: Any, sso: fake
     ids = migrated(adapter, sso)
     suite = fakes.FakeProvider("https://suite.example.com")
     with adapter.store() as store:
-        oidc.coupling.couple(
+        coupled = oidc.coupling.couple(
             store,
             issuer=suite.issuer,
             client_id=suite.client_id,
@@ -300,6 +511,12 @@ def test_22_up_again_nothing_is_taken_over_while_coupled(adapter: Any, sso: fake
     older(adapter, sso, subjects={"alex": "elsewhere"}, issuer="https://other.example.com", client_id="other")
     adapter.run_migration()
     assert sorted((item["slug"], item["issuer"], item["enabled"]) for item in adapter.providers()) == before
+    # The anchor outlives the coupling: uncoupled, the way back shows the own entry in full again.
+    with adapter.store() as store:
+        oidc.coupling.uncouple(store, coupled)
+    adapter.run_migration()
+    assert linked(adapter) == {"alex": "person-1"}
+    assert found(adapter, like=in_full(adapter, sso)) == in_full(adapter, sso)
 
 
 def test_22_the_helper_for_entries_in_the_store_is_untouched_by_the_way_back(adapter: Any, net: fakes.Network) -> None:

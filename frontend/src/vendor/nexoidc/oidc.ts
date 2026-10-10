@@ -47,7 +47,11 @@ export const OIDC_FORM_CODES = [
 /** The steps of the authentik button in their order; `binding` only in apps with one account. */
 export const AUTHENTIK_STEPS = ['reached', 'signingKey', 'mapping', 'provider', 'application', 'filled'] as const
 export const AUTHENTIK_STEP_BINDING = 'binding'
-/** Why a step failed, under `oidc.authentik.why.<reason>` (with `{{status}}`; `issuer_change` with `{{count}}`). */
+/**
+ * Why a step failed, under `oidc.authentik.why.<reason>` (with `{{status}}`; `issuer_change` with `{{count}}`).
+ * `public_url_needed` (since 1.0.10): the app has no public address and none was confirmed; the card shows its
+ * suggestion (`authentikProposal`) and runs the button again with `public_url`.
+ */
 export const AUTHENTIK_REASONS = [
   'unreachable',
   'unusable',
@@ -57,6 +61,7 @@ export const AUTHENTIK_REASONS = [
   'slug',
   'coupled',
   'issuer_change',
+  'public_url_needed',
 ] as const
 
 export type OidcErrorCode = (typeof OIDC_ERROR_CODES)[number]
@@ -93,6 +98,88 @@ export function authentikIssuerChange(result: {
 }): number | null {
   const failed = result.steps.find((step) => !step.ok)
   return failed?.reason === 'issuer_change' ? (result.count ?? 0) : null
+}
+
+/**
+ * What `GET <api>/oidc/authentik/address` answers, and `address` of a run refused with `public_url_needed`
+ * (`authentik.address_view`, since 1.0.10).
+ */
+export interface AuthentikAddress {
+  /** The app's public address, '' for none: then the card suggests the browser's own (`authentikProposal`). */
+  public_url: string
+  /** This request's address as the server sees it. */
+  seen: string
+  forwarded_proto: string
+  forwarded_host: string
+  /** A proxy named another scheme or host than the app took. */
+  proxy_ignored: boolean
+  /** What the button registers behind the public address, for example `/api/oidc/authentik/callback`. */
+  callback_path: string
+  /** The redirect address the sign-in sends today. */
+  redirect_uri: string
+  /** What the button registered at authentik last, '' for nothing. */
+  registered_redirect_uri: string
+  /** authentik still knows an older redirect address: the card shows `oidc.authentik.stale`. */
+  stale: boolean
+}
+
+/**
+ * The public address the authentik card suggests while the app has none: the address the browser uses plus the
+ * app's base path, without a slash at the end. Call it as `authentikProposal(window.location.origin,
+ * import.meta.env.BASE_URL)`; "Use it and set up" sends it as `public_url` with the button. A relative base (`./`,
+ * `.`, as Vite writes it for `base: './'`) adds nothing, `./app/` adds `/app`.
+ */
+export function authentikProposal(origin: string, basePath = ''): string {
+  let path = basePath.trim()
+  if (path === '.' || path.startsWith('./')) path = path.slice(1)
+  path = path.replace(/\/+$/, '')
+  return origin.replace(/\/+$/, '') + (path && !path.startsWith('/') ? `/${path}` : path)
+}
+
+/** The redirect address the button registers behind a public address (shown under the suggestion). */
+export function authentikRedirect(publicUrl: string, address: Pick<AuthentikAddress, 'callback_path'>): string {
+  return publicUrl.replace(/\/+$/, '') + address.callback_path
+}
+
+const ORIGIN = /^([A-Za-z][A-Za-z0-9+.-]*):\/\/([^/?#]*)/
+
+/**
+ * How the browser's address differs from the one the server sees: `scheme` (http at the server, https in the
+ * browser: a proxy ends TLS and the app does not take its word), `host`, or null. The same as the server's
+ * `authentik.address_mismatch`.
+ */
+export function authentikAddressMismatch(proposal: string, seen: string): 'scheme' | 'host' | null {
+  const browser = ORIGIN.exec(proposal.trim())
+  const server = ORIGIN.exec(seen.trim())
+  if (!browser || !server) return null
+  const [, browserScheme = '', browserHost = ''] = browser
+  const [, serverScheme = '', serverHost = ''] = server
+  if (browserScheme.toLowerCase() !== serverScheme.toLowerCase()) return 'scheme'
+  if (browserHost.toLowerCase() !== serverHost.toLowerCase()) return 'host'
+  return null
+}
+
+/**
+ * Whether the card shows `oidc.authentik.proxyWarning` (with `address` set to `address.seen`) under its suggestion:
+ * the server sees another scheme or host than the browser uses, or a proxy said so and the app did not listen.
+ */
+export function authentikProxyWarning(
+  proposal: string,
+  address: Pick<AuthentikAddress, 'seen' | 'proxy_ignored'>,
+): boolean {
+  return address.proxy_ignored || authentikAddressMismatch(proposal, address.seen) !== null
+}
+
+/**
+ * The redirect address authentik still knows when the public address changed after the button ran, else null: the
+ * card shows `oidc.authentik.stale` with it until the button ran again. Takes the address view or the entry of the
+ * provider list (`registered_redirect_uri`, `redirect_stale`).
+ */
+export function authentikStale(
+  item: { registered_redirect_uri: string; stale?: boolean; redirect_stale?: boolean } | null | undefined,
+): string | null {
+  if (!item) return null
+  return (item.stale ?? item.redirect_stale) && item.registered_redirect_uri ? item.registered_redirect_uri : null
 }
 
 /** A wording file (`oidc.de.json`, `oidc.en.json`) or a part of it. */

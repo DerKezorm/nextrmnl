@@ -80,6 +80,24 @@ def client_ip(request: Request | WebSocket) -> str:
     return (hops[0] if hops else peer)[:64]
 
 
+def request_base(request: Request) -> str:
+    """The address this request came to as the app should see it, with a slash at the end (``request.base_url``).
+
+    Behind a reverse proxy that ends TLS the request arrives as ``http``. The scheme is the proxy's to tell, so
+    ``X-Forwarded-Proto`` is taken from a peer that is one of ``NEXTRMNL_TRUSTED_PROXIES`` (the proxies whose
+    ``X-Forwarded-For`` is believed already) and from nobody else, and then the value the nearest proxy wrote (the
+    rightmost). Nothing else of the header is used: not the host, not the port. Without trusted proxies the address is
+    the request's own, as before."""
+    base = request.base_url
+    peer = request.client.host if request.client else ""
+    if peer and _is_trusted_proxy(peer):
+        values = [part.strip().lower() for part in request.headers.get("x-forwarded-proto", "").split(",")]
+        scheme = values[-1] if values else ""
+        if scheme in ("http", "https"):
+            base = base.replace(scheme=scheme)
+    return str(base)
+
+
 # --- Proving the password once more while signed in ------------------------------------------------------------ #
 #
 # Turning the second factor off, exporting the vault, opening it, changing the password: each asks for the

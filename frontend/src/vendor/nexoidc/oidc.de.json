@@ -14,6 +14,9 @@
       "passwordHint": "Aus: Nur die Anbieter lassen herein. Du als Betreiber kannst dich immer mit deinem Passwort anmelden.",
       "address": "Öffentliche Adresse",
       "addressHint": "Die Adresse, unter der man {{app}} erreicht. Einladungen, Anbieter und Links in Mails nutzen sie.",
+      "addressChangeConfirm": "authentik kennt noch die Rückleitadresse {{address}}. Nach dem Speichern geht die Anmeldung über authentik erst wieder, wenn du den Knopf unter „authentik in einem Schritt“ noch einmal ausführst.",
+      "addressChangeHand_one": "Bei {{count}} von Hand eingetragenen Anbieter musst du die Rückleitadresse dort selbst anpassen.",
+      "addressChangeHand_other": "Bei {{count}} von Hand eingetragenen Anbietern musst du die Rückleitadresse dort selbst anpassen.",
       "providersTitle": "Anmeldeanbieter",
       "providersText": "Jeder Anbieter, der OpenID Connect spricht: authentik, Microsoft Entra ID, Keycloak, Authelia, Pocket ID. Jeder bekommt einen Knopf auf der Anmeldeseite.",
       "empty": "Noch kein Anbieter. Richte authentik unten in einem Schritt ein oder trag einen Anbieter von Hand ein.",
@@ -51,7 +54,11 @@
       "run": "Einrichten",
       "blueprint": "Stattdessen Blueprint herunterladen",
       "asking": "Einen Moment, authentik wird gefragt. Das kann bis zu 20 Sekunden dauern.",
-      "noAddress": "Trag zuerst die öffentliche Adresse ein: authentik schickt die Leute dorthin zurück.",
+      "noAddress": "Noch keine öffentliche Adresse. Du erreichst {{app}} gerade unter dieser Adresse, und authentik leitet nach der Anmeldung dorthin zurück:",
+      "adopt": "Übernehmen und einrichten",
+      "adoptOnly": "Nur übernehmen",
+      "proxyWarning": "Am Server kommt diese Anfrage als {{address}} an. Steht {{app}} hinter einem Proxy, muss der das Schema weitergeben (X-Forwarded-Proto) und {{app}} ihm trauen (Einstellung für vertraute Proxys, siehe Anleitung).",
+      "stale": "authentik kennt noch die alte Rückleitadresse {{address}}. Bis du den Knopf noch einmal mit einem Token ausführst, geht die Anmeldung über authentik nicht.",
       "step": {
         "reached": "Verbindung zu authentik",
         "signingKey": "Schlüssel zum Signieren",
@@ -70,7 +77,8 @@
         "slug": "In authentik gehören alle Slugs, die {{app}} seiner Anwendung geben würde, schon anderen Anwendungen. Benenne den Anbieter von {{app}} dort um und versuch es noch einmal.",
         "coupled": "Solange {{app}} gekoppelt ist, kommt die Anmeldung über die Kopplung. Entkopple zuerst, dann richte authentik hier ein.",
         "issuer_change_one": "Das ist ein anderes authentik als bisher, also ein anderer Aussteller. {{count}} Konto muss sich danach neu verknüpfen.",
-        "issuer_change_other": "Das ist ein anderes authentik als bisher, also ein anderer Aussteller. {{count}} Konten müssen sich danach neu verknüpfen."
+        "issuer_change_other": "Das ist ein anderes authentik als bisher, also ein anderer Aussteller. {{count}} Konten müssen sich danach neu verknüpfen.",
+        "public_url_needed": "{{app}} hat noch keine öffentliche Adresse. Übernimm die vorgeschlagene, dann richtet {{app}} authentik damit ein."
       }
     },
     "account": {

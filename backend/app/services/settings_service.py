@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from ..config import get_settings
 from ..models import Setting
+from ..vendor.nexoidc import flow
 
 TARGETS_PRIVATE = "private"
 TARGETS_LIST = "list"
@@ -56,6 +57,9 @@ DEFAULTS: dict[str, Any] = {
     #: What the way back wrote last, summed up by the sign-in module (``oidc_store.FINGERPRINT``): no secret, no
     #: subject and no issuer in the clear.
     "oidc_legacy_fingerprint": "",
+    #: The issuer the version before the list knows, as it wrote it, or ``-``: the way back is closed
+    #: (``oidc_store.ANCHOR``, ``migrate.way_back``). Never shown.
+    "oidc_legacy_anchor": "",
     #: The address people use to reach nextrmnl: invitation links, the OIDC redirect, the WebSocket origin
     #: check. Empty means ``NEXTRMNL_PUBLIC_URL`` from the environment, and without that the request's own.
     "public_url": "",
@@ -127,7 +131,9 @@ def normalize_public_url(value: str) -> str:
         parts.port  # noqa: B018 - raises ValueError when the port is not a number
     except ValueError as error:
         raise ValueError("port") from error
-    return f"{parts.scheme.lower()}://{parts.netloc}"
+    # Nothing the sign-in module would turn down as a public address (a host it cannot read, port 0, more than 199
+    # characters): the authentik card saves through here as well.
+    return flow.clean_public_url(f"{parts.scheme.lower()}://{parts.netloc}")
 
 
 def public_url(db: Session) -> str:

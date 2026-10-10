@@ -39,9 +39,9 @@ def _redirect(client: TestClient) -> str:
 
 
 def test_the_public_address_drives_invitation_links_and_the_oidc_redirect(client: TestClient, operator: dict) -> None:
-    # Nothing set: the request's own address.
+    # Nothing set: the blueprint will not guess an address from the request (a proxy that ends TLS shows it as http).
     assert client.get("/api/settings").json()["public_url"] == ""
-    assert _redirect(client) == "http://testserver/api/oidc/authentik/callback"
+    assert client.get("/api/oidc/authentik/blueprint").status_code == 409
 
     saved = set_public_url(client, PUBLIC + "/")
     assert saved.status_code == 200, saved.text
@@ -52,9 +52,9 @@ def test_the_public_address_drives_invitation_links_and_the_oidc_redirect(client
     assert invite.status_code == 201, invite.text
     assert invite.json()["link"].startswith(PUBLIC + "/invite/")
 
-    # Empty again: back to the request.
+    # Empty again: the sign-in falls back to the request's own address, the blueprint asks for one.
     assert set_public_url(client, "").json()["public_url"] == ""
-    assert _redirect(client) == "http://testserver/api/oidc/authentik/callback"
+    assert client.get("/api/oidc/authentik/blueprint").status_code == 409
 
 
 @pytest.mark.parametrize(

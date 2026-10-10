@@ -9,16 +9,19 @@ from __future__ import annotations
 import logging
 import time
 from datetime import timedelta
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import Engine, MetaData, Table, create_engine, insert, select, text
+from starlette.websockets import WebSocketDisconnect
 
 from app import crypto
 from app.db import SessionLocal
-from app.models import MEMBER, OPERATOR, SIGN_IN_OIDC, Account, Invite, OidcLink, OidcProvider, utcnow
+from app.models import MEMBER, OPERATOR, SIGN_IN_OIDC, Account, Base, Invite, OidcLink, OidcProvider, utcnow
 from app.routers.auth import PENDING_COOKIE
 from app.routers.oidc import NEXT_COOKIE
+from app.routers.sessions import WS_UNAUTHORIZED
 from app.security import hash_password, hash_token
 from app.services import accounts, backups, oidc_store, settings_service, totp
 from tests.conftest import PASSWORD, sign_in
@@ -33,6 +36,7 @@ from tests.oidc_helpers import (
     sign_in_via_oidc,
 )
 
+ORIGIN = {"origin": "http://testserver"}
 AUTHENTIK_ISSUER = "https://sso.example.com/application/o/nextrmnl/"
 
 
@@ -271,12 +275,51 @@ def test_the_account_list_shows_each_accounts_providers_and_the_operator_unlinks
     assert wrong.status_code == 401 and wrong.json()["detail"]["code"] == "wrong_password"
     assert client.request("DELETE", address, json={"password": PASSWORD}, headers=UI).status_code == 204
     assert {row["name"]: row for row in client.get("/api/accounts").json()}["anna"]["providers"] == []
-    # Never unseen: anna's own page says so with the provider's name, until she says she saw it.
+    # Whoever was in is out (the next test); with the password anna comes back, and her own page says what happened,
+    # with the provider's name, until she says she saw it. Never unseen.
+    assert member.get("/api/auth/me").status_code == 401
+    sign_in(member, "anna")
     assert member.get("/api/auth/me").json()["oidc_unlinked"] == ["SSO"]
     assert member.delete("/api/auth/oidc-notice", headers=UI).status_code == 204
     assert member.get("/api/auth/me").json()["oidc_unlinked"] == []
     gone = client.request("DELETE", address, json={"password": PASSWORD}, headers=UI)
     assert gone.status_code == 404
+
+
+def test_the_operator_unlinking_ends_every_session_of_the_account_and_leaves_their_own_alone(
+    client: TestClient, operator: dict, provider: FakeProvider, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Whoever came in through the identity is out: every browser session of the account (one that began with the
+    password as much as one through the provider), its open vault and its terminals. Not the operator's own."""
+    from app.routers import oidc as oidc_router
+    from app.services import vault
+
+    entry = add_provider(client, provider)
+    anna = make_account("anna")
+    password_browser = browser_of("anna")
+    assert location(link(password_browser, provider, PASSWORD, sub="anna-1")) == "/account?linked=sso"
+    provider_browser = fresh_browser()
+    assert location(sign_in_via_oidc(provider_browser, provider, sub="anna-1")) == "/"
+    assert password_browser.get("/api/auth/me").status_code == 200
+    assert provider_browser.get("/api/auth/me").status_code == 200
+    cut: list[tuple[int, str]] = []
+    locked: list[int] = []
+    monkeypatch.setattr(oidc_router, "end_ssh_sessions", lambda account_id, detail: cut.append((account_id, detail)))
+    monkeypatch.setattr(vault, "lock", locked.append)
+    address = f"/api/oidc/admin/accounts/{anna}/links/{entry['id']}"
+    assert client.request("DELETE", address, json={"password": PASSWORD}, headers=UI).status_code == 204
+    assert password_browser.get("/api/auth/me").status_code == 401
+    assert provider_browser.get("/api/auth/me").status_code == 401
+    assert cut == [(anna, "signed_out")] and locked == [anna]
+    # The operator's own link: lost, but their own sessions stay.
+    own = location(link(client, provider, PASSWORD, sub="admin-1"))
+    assert own == "/account?linked=sso"
+    cut.clear()
+    locked.clear()
+    admin_id = client.get("/api/auth/me").json()["id"]
+    gone = client.request("DELETE", f"/api/oidc/admin/accounts/{admin_id}/links/{entry['id']}", json={"password": PASSWORD}, headers=UI)
+    assert gone.status_code == 204 and client.get("/api/auth/me").status_code == 200
+    assert cut == [] and locked == []
 
 
 def test_a_member_cannot_unlink_others(client: TestClient, operator: dict, provider: FakeProvider) -> None:
@@ -374,6 +417,130 @@ def test_a_trusted_provider_lets_an_account_with_a_second_factor_in_without_the_
     browser = fresh_browser()
     assert location(sign_in_via_oidc(browser, provider, sub="anna-1")) == "/"
     assert browser.get("/api/auth/me").json()["name"] == "anna"
+
+
+# --- "Require a second factor" and the way in ------------------------------------------------------------------------
+
+
+def _require_second_factor(client: TestClient) -> None:
+    assert client.put("/api/settings", json={"two_factor_required": True}, headers=UI).status_code == 200
+
+
+def _forced_to_set_up(browser: TestClient) -> bool:
+    """Whether the session is held on the account page until a second factor is set up."""
+    me = browser.get("/api/auth/me").json()
+    blocked = browser.get("/api/connections")
+    forced = blocked.status_code == 403 and blocked.json()["detail"]["code"] == "second_factor_setup_required"
+    assert me["second_factor_setup_required"] is forced
+    assert forced or blocked.status_code == 200
+    return forced
+
+
+def _terminal_socket_code(browser: TestClient) -> int:
+    """The close code the terminal WebSocket answers this session (a connection that does not exist, so that a
+    session let through ends on "not found" and one held back ends on "not signed in")."""
+    address = "/api/sessions/ws?connection_id=999999"
+    with pytest.raises(WebSocketDisconnect) as stopped, browser.websocket_connect(address, headers=ORIGIN):
+        pass
+    return int(stopped.value.code)
+
+
+def test_a_password_account_coming_in_through_a_trusted_provider_is_not_forced_to_set_up_a_second_factor(
+    client: TestClient, operator: dict, provider: FakeProvider
+) -> None:
+    """Blueprint 04, "Zweiten Faktor verlangen" (decided 10.10.2026): the provider has checked it. The same account
+    with its password is held to it as before."""
+    add_provider(client, provider)
+    make_account("anna")
+    by_password = browser_of("anna")
+    assert location(link(by_password, provider, PASSWORD, sub="anna-1")) == "/account?linked=sso"
+    _require_second_factor(client)
+    assert _forced_to_set_up(by_password) is True
+    by_provider = fresh_browser()
+    assert location(sign_in_via_oidc(by_provider, provider, sub="anna-1")) == "/"
+    assert by_provider.get("/api/auth/me").json()["name"] == "anna"
+    assert _forced_to_set_up(by_provider) is False
+    # The terminal socket follows the same rule as the pages.
+    assert _terminal_socket_code(by_password) == WS_UNAUTHORIZED
+    assert _terminal_socket_code(by_provider) != WS_UNAUTHORIZED
+    # Each session keeps its own way: a new password sign-in is held again, the provider one stays free.
+    again = browser_of("anna")
+    assert _forced_to_set_up(again) is True
+    assert _forced_to_set_up(by_provider) is False
+
+
+def test_a_provider_that_is_not_trusted_with_the_second_factor_does_not_free_a_password_account(
+    client: TestClient, operator: dict, provider: FakeProvider
+) -> None:
+    add_provider(client, provider, trusts_second_factor=False)
+    make_account("anna")
+    assert location(link(browser_of("anna"), provider, PASSWORD, sub="anna-1")) == "/account?linked=sso"
+    _require_second_factor(client)
+    browser = fresh_browser()
+    assert location(sign_in_via_oidc(browser, provider, sub="anna-1")) == "/"
+    assert _forced_to_set_up(browser) is True
+
+
+def test_an_account_that_signs_in_through_providers_alone_is_never_forced_to_set_up_a_second_factor(
+    client: TestClient, operator: dict, provider: FakeProvider
+) -> None:
+    add_provider(client, provider, auto_create=True)
+    _require_second_factor(client)
+    browser = fresh_browser()
+    assert location(sign_in_via_oidc(browser, provider, sub="clara-1", preferred_username="clara")) == "/"
+    assert row_of("clara").sign_in == SIGN_IN_OIDC
+    assert _forced_to_set_up(browser) is False
+
+
+def test_the_session_free_of_the_requirement_can_still_enrol_and_the_view_agrees(
+    client: TestClient, operator: dict, provider: FakeProvider
+) -> None:
+    """Freed is not locked out: setting a second factor up from a provider session works, and what the account says
+    about itself afterwards is the same as before."""
+    add_provider(client, provider)
+    make_account("anna")
+    assert location(link(browser_of("anna"), provider, PASSWORD, sub="anna-1")) == "/account?linked=sso"
+    _require_second_factor(client)
+    browser = fresh_browser()
+    sign_in_via_oidc(browser, provider, sub="anna-1")
+    begun = browser.post("/api/auth/totp/begin", headers=UI)
+    assert begun.status_code == 200
+    code = totp.code_at(begun.json()["secret"], time.time())
+    done = browser.post("/api/auth/totp/confirm", json={"code": code, "password": PASSWORD}, headers=UI)
+    assert done.status_code == 200, done.text
+    assert done.json()["account"]["two_factor"] is True and done.json()["account"]["second_factor_setup_required"] is False
+
+
+def _insert_as_the_version_before(engine: Engine, table_name: str, unknown: set[str], **given: object) -> None:
+    """A raw insert with every column the version before the list knows (a value of the right kind for each that has
+    none given) and none of ``unknown``: the columns added since."""
+    table = Table(table_name, MetaData(), autoload_with=engine)
+    values: dict[str, object] = dict(given)
+    for column in table.columns:
+        if column.name in unknown or column.name in values or column.primary_key or column.nullable:
+            continue
+        kind = column.type.python_type
+        values[column.name] = (
+            "" if kind is str else 0 if kind in (int, bool) else b"" if kind is bytes else utcnow().replace(tzinfo=None)
+        )
+    with engine.begin() as connection:
+        connection.execute(insert(table).values(**values))
+
+
+def test_the_columns_the_version_before_does_not_know_have_a_default_in_a_fresh_database(tmp_path: Path) -> None:
+    """The version before the list adds accounts and sessions with the columns it knows. In a database this version
+    made from scratch (``create_all``) that must still work, so every column added since needs a default of its own
+    in the database itself: a raw insert without it."""
+    engine = create_engine(f"sqlite:///{tmp_path / 'fresh.db'}")
+    try:
+        Base.metadata.create_all(engine)
+        _insert_as_the_version_before(engine, "accounts", {"oidc_unlinked"}, id=1, name="old", prefs="{}")
+        _insert_as_the_version_before(engine, "auth_sessions", {"via_trusted_provider"}, token_hash="t", account_id=1)
+        with engine.connect() as connection:
+            assert connection.execute(text("SELECT oidc_unlinked FROM accounts")).scalar_one() == ""
+            assert connection.execute(text("SELECT via_trusted_provider FROM auth_sessions")).scalar_one() == 0
+    finally:
+        engine.dispose()
 
 
 # --- Invitations --------------------------------------------------------------------------------------------------
@@ -725,6 +892,58 @@ def test_the_old_settings_and_subjects_always_describe_the_entry_oidc(
     old = _old()
     assert (old["client"], old["secret"], old["auto"]) == (provider.client_id, provider.client_secret, True)
     assert old["subjects"]["anna"] == "anna-9"
+    # On, but the provider is not trusted with the second factor: the old version would let a person in without the
+    # code this version asks, so it finds no client either (and no "new people"); trusted again, all is back.
+    untrusted = client.put(
+        f"/api/oidc/admin/providers/{entry.id}",
+        json={**body, "enabled": True, "auto_create": True, "trusts_second_factor": False},
+        headers=UI,
+    )
+    assert untrusted.status_code == 200
+    old = _old()
+    assert (old["client"], old["secret"], old["auto"]) == ("", "", False)
+    assert old["name"] == "Company" and old["subjects"]["anna"] == "anna-9"
+    trusted = client.put(
+        f"/api/oidc/admin/providers/{entry.id}",
+        json={**body, "enabled": True, "auto_create": True, "trusts_second_factor": True},
+        headers=UI,
+    )
+    assert trusted.status_code == 200
+    old = _old()
+    assert (old["client"], old["secret"], old["auto"]) == (provider.client_id, provider.client_secret, True)
+
+
+def test_a_start_takes_over_what_the_older_version_changed_once_and_backs_up_first(
+    client: TestClient, operator: dict, provider: FakeProvider
+) -> None:
+    """The start-up after the way back: the changes of the older version come in once, with a backup before; a start
+    after that, or one where it changed nothing, writes and saves nothing."""
+    make_account("anna")
+    make_account("ben")
+    _legacy(provider, label="Company", subjects={"anna": "anna-1", "ben": "ben-1"})
+    assert oidc_store.migrate_settings(backup=False) is not None
+    before = len(backups.entries())
+    assert oidc_store.migrate_settings() is None
+    assert len(backups.entries()) == before
+
+    def links() -> dict[str, str]:
+        with SessionLocal() as db:
+            names = {row.id: row.name for row in db.scalars(select(Account))}
+            return {names[item.account_id]: item.subject for item in db.scalars(select(OidcLink))}
+
+    assert links() == {"anna": "anna-1", "ben": "ben-1"}
+    # The older version lets ben go and gives anna another subject.
+    with SessionLocal() as db:
+        accounts.by_name(db, "ben").oidc_subject = ""  # type: ignore[union-attr]
+        accounts.by_name(db, "anna").oidc_subject = "anna-2"  # type: ignore[union-attr]
+        db.commit()
+    assert oidc_store.migrate_settings() is None
+    assert links() == {"anna": "anna-2"}
+    assert len(backups.entries()) == before + 1
+    assert _old()["subjects"]["ben"] == "" and _old()["subjects"]["anna"] == "anna-2"
+    # Nothing changed since: nothing taken over, nothing saved.
+    assert oidc_store.migrate_settings() is None
+    assert links() == {"anna": "anna-2"} and len(backups.entries()) == before + 1
 
 
 def test_another_issuer_or_removing_the_entry_oidc_empties_the_old_settings_for_good(

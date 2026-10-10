@@ -7,7 +7,8 @@
  *
  * The wording files use i18next's `{{app}}` for the name of the app. Set it once, for example
  * `i18n.init({ interpolation: { defaultVariables: { app: 'nexlore' } } })`, and merge the files into the app's
- * resources under the same keys (`oidc.…`).
+ * resources under the same keys (`oidc.…`) through `oidcWording` (since 1.0.9; it picks the sentences of apps with
+ * one account).
  */
 
 /** The error codes of Bauplan 02; each has a sentence under `oidc.error.<code>`. Same order as `errors.CODES`. */
@@ -92,6 +93,35 @@ export function authentikIssuerChange(result: {
 }): number | null {
   const failed = result.steps.find((step) => !step.ok)
   return failed?.reason === 'issuer_change' ? (result.count ?? 0) : null
+}
+
+/** A wording file (`oidc.de.json`, `oidc.en.json`) or a part of it. */
+export interface OidcWording {
+  [key: string]: string | OidcWording
+}
+
+function overlay(base: OidcWording, over: OidcWording): OidcWording {
+  const merged: OidcWording = { ...base }
+  for (const [key, value] of Object.entries(over)) {
+    const below = merged[key]
+    merged[key] = typeof value === 'object' && typeof below === 'object' ? overlay(below, value) : value
+  }
+  return merged
+}
+
+/**
+ * The words of a wording file as the app merges them into its resources. Apps with one account (nexcrate, nexsift;
+ * `AppConfig.single_account`) pass `singleAccount: true`: then the sentences under `oidc.single` take the place of
+ * the keys of the same name (`oidc.admin.passwordHint`, `oidc.admin.addressHint`, `oidc.error.oidc_no_account`), so
+ * the page asks for the same keys in every app. `oidc.single` itself is not handed on. Counts use i18next's plural
+ * forms (`_one`, `_other`): ask for the key without the suffix and pass `count`.
+ */
+export function oidcWording(file: OidcWording, options: { singleAccount: boolean }): OidcWording {
+  const root = file.oidc
+  if (typeof root !== 'object') return { ...file }
+  const { single, ...words } = root
+  const chosen = options.singleAccount && typeof single === 'object' ? overlay(words, single) : words
+  return { ...file, oidc: chosen }
 }
 
 const SPELLED_OUT: Record<string, string> = { ä: 'ae', ö: 'oe', ü: 'ue', ß: 'ss', Ä: 'Ae', Ö: 'Oe', Ü: 'Ue' }

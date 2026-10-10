@@ -24,7 +24,7 @@ from ..deps import (
 )
 from ..meldungen import fehler, meldung
 from ..models import SIGN_IN_PASSWORD, Account
-from ..security import brake, end_all_sessions
+from ..security import SESSION_COOKIE, brake, end_all_sessions
 from ..services import accounts, notify, passkeys, settings_service, totp, vault
 from .auth import PENDING_COOKIE, account_view, end_ssh_sessions, sign_in_response
 
@@ -93,7 +93,7 @@ def confirm(payload: ConfirmIn, request: Request, account: CurrentAccount, db: D
     db.commit()
     totp.drop_enrolment(account.id)
     logger.info("Second factor enabled account=%s", account.name)
-    return {"recovery_codes": codes, "account": account_view(db, account)}
+    return {"recovery_codes": codes, "account": account_view(db, account, request.cookies.get(SESSION_COOKIE))}
 
 
 @router.post("/auth/totp/disable", summary="Turn the second factor off; needs the password")
@@ -103,7 +103,7 @@ def disable(payload: PasswordIn, request: Request, account: CurrentAccount, db: 
     _check_password(request, db, account, payload.password)
     _reset(db, account, keep_recovery=passkeys.count(db, account.id) > 0)
     logger.info("Second factor disabled account=%s", account.name)
-    return account_view(db, account)
+    return account_view(db, account, request.cookies.get(SESSION_COOKIE))
 
 
 @router.post("/auth/totp/recovery", summary="New recovery codes; the old ones stop working")
@@ -115,7 +115,7 @@ def new_recovery_codes(payload: PasswordIn, request: Request, account: CurrentAc
     account.totp_recovery = totp.recovery_hashes(codes)
     db.commit()
     logger.info("Recovery codes renewed account=%s", account.name)
-    return {"recovery_codes": codes, "account": account_view(db, account)}
+    return {"recovery_codes": codes, "account": account_view(db, account, request.cookies.get(SESSION_COOKIE))}
 
 
 def _reset(db: DbSession, account: Account, keep_recovery: bool = False) -> None:

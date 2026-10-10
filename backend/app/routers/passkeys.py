@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 from ..deps import CurrentAccount, DbSession, check_csrf, client_ip
 from ..meldungen import fehler, meldung
 from ..models import SIGN_IN_PASSWORD, Account
-from ..security import brake
+from ..security import SESSION_COOKIE, brake
 from ..services import accounts, passkeys, settings_service, totp, vault
 from .auth import PENDING_COOKIE, account_view, sign_in_response
 from .totp import _check_password, _clear_pending_cookie
@@ -77,7 +77,11 @@ def finish(payload: FinishIn, request: Request, account: CurrentAccount, db: DbS
         codes = totp.generate_recovery_codes()
         account.totp_recovery = totp.recovery_hashes(codes)
         db.commit()
-    return {"passkey": passkeys.view(row), "recovery_codes": codes, "account": account_view(db, account)}
+    return {
+        "passkey": passkeys.view(row),
+        "recovery_codes": codes,
+        "account": account_view(db, account, request.cookies.get(SESSION_COOKIE)),
+    }
 
 
 @router.post("/auth/passkeys/{passkey_id}/remove", summary="Remove a passkey; needs the password")
@@ -91,7 +95,7 @@ def remove(
         # The last factor went; recovery codes for nothing would only be a way around the password.
         account.totp_recovery = ""
         db.commit()
-    return account_view(db, account)
+    return account_view(db, account, request.cookies.get(SESSION_COOKIE))
 
 
 # --- The passkey step of a sign-in ----------------------------------------------------------------------------- #

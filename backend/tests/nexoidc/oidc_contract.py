@@ -35,6 +35,10 @@ class StandardAdapter:
     has_second_factor = True
     #: "single": the app kept one provider in its settings and migrates (Pflichttest 22); "list" or "none": not.
     legacy_model = "single"
+    #: legacy_model "single": how the version before the list behaved after the provider, as the app passes it to
+    #: ``migrate.plan`` and ``migrate.resync`` (Bauplan 06 "Wanderung"): True asked no code, False (nexdiary, nexpaper)
+    #: asked it.
+    trusted_before = True
     #: Callback paths the app's providers knew before the module, with ``{slug}`` (nexbeat
     #: ``/api/auth/oidc/{slug}/callback``); the app routes them to the same return. Empty: none.
     old_callback_paths: tuple[str, ...] = ()
@@ -117,7 +121,15 @@ class StandardAdapter:
         raise NotImplementedError
 
     def run_migration(self) -> None:
-        """APP (legacy_model "single"): run the app's migration to the provider list."""
+        """APP (legacy_model "single"): what the app runs at every start-up: the migration to the provider list once;
+        after it, ``migrate.resync`` with the fingerprint stored at the last mirror; then the mirror and the new
+        fingerprint (since 1.0.9). ``legacy_setup`` between two calls is the version before the list at work."""
+        raise NotImplementedError
+
+    def legacy_read(self) -> dict[str, Any]:
+        """APP (legacy_model "single", since 1.0.9): the old settings and ``oidc_subject`` as the app has them now
+        (what the version before the list would find): ``issuer``, ``client_id``, ``client_secret`` (decrypted),
+        ``label`` and ``subjects`` (account name to subject, accounts without one left out)."""
         raise NotImplementedError
 
     # --- standard routes (override when the app differs) ------------------------------------------------------------

@@ -115,7 +115,9 @@ def _set_pending_cookie(response: Response, request: Request, token: str) -> Non
     )
 
 
-def account_view(db: DbSession, account: Account) -> dict[str, Any]:
+def account_view(db: DbSession, account: Account, token: str | None = None) -> dict[str, Any]:
+    """The account as the interface sees it. ``token`` is the session cookie of the account itself when it asks
+    about itself: whether it must set up a second factor depends on how that session began."""
     return {
         "id": account.id,
         "name": account.name,
@@ -129,7 +131,7 @@ def account_view(db: DbSession, account: Account) -> dict[str, Any]:
         "two_factor_recovery_left": len(totp.load_recovery(account.totp_recovery))
         if totp.has_second_factor(db, account)
         else 0,
-        "second_factor_setup_required": totp.setup_required(db, account),
+        "second_factor_setup_required": totp.setup_required(db, account, token),
         #: How many providers the account is linked to; which ones the account page asks ``/api/oidc/me``.
         "oidc_links": oidc_store.link_count(db, account.id),
         #: Providers the operator unlinked it from, until the account says it saw it.
@@ -267,8 +269,8 @@ def seen_unlinked(account: CurrentAccount, db: DbSession) -> None:
 
 
 @router.get("/auth/me", summary="The signed-in account")
-def me(account: CurrentAccount, db: DbSession) -> dict[str, Any]:
-    return account_view(db, account)
+def me(request: Request, account: CurrentAccount, db: DbSession) -> dict[str, Any]:
+    return account_view(db, account, request.cookies.get(SESSION_COOKIE))
 
 
 @router.put("/auth/password", status_code=204, summary="Change the own password")

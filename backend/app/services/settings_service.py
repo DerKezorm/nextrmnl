@@ -53,6 +53,9 @@ DEFAULTS: dict[str, Any] = {
     "oidc_auto_create": False,
     #: Set once the old settings were looked at (``oidc_store.migrate_settings``).
     "oidc_list_migrated": False,
+    #: What the way back wrote last, summed up by the sign-in module (``oidc_store.FINGERPRINT``): no secret, no
+    #: subject and no issuer in the clear.
+    "oidc_legacy_fingerprint": "",
     #: The address people use to reach nextrmnl: invitation links, the OIDC redirect, the WebSocket origin
     #: check. Empty means ``NEXTRMNL_PUBLIC_URL`` from the environment, and without that the request's own.
     "public_url": "",

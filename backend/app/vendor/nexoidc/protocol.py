@@ -93,15 +93,34 @@ def _placeholder_pattern(published: str) -> re.Pattern[str] | None:
     return re.compile(re.escape(before) + "/" + _SEGMENT.pattern + tail)
 
 
+def _comparable(issuer: str) -> str:
+    """An issuer as ``same_issuer`` compares it: ``normalize_issuer``, then scheme and host in small letters (they name
+    the same server in any case, RFC 3986 6.2.2.1). Userinfo, path, query and fragment stay exactly as written: a path
+    may tell two issuers apart by its letters. Taken apart by hand, not with ``urlsplit``, which drops tabs and line
+    breaks and would make ``/tab<TAB>x`` look like ``/tabx``."""
+    issuer = normalize_issuer(issuer)
+    scheme, separator, rest = issuer.partition("://")
+    if not separator or not scheme:
+        return issuer
+    end = min((index for index in (rest.find(mark) for mark in "/?#") if index >= 0), default=len(rest))
+    userinfo, at, host = rest[:end].rpartition("@")
+    return f"{scheme.lower()}://{userinfo}{at}{host.lower()}{rest[end:]}"
+
+
 def same_issuer(a: str, b: str) -> bool:
     """Whether two ways of writing name one issuer.
 
     Compared without spaces around and without a slash at the end (authentik hands its issuer out with one, a form
-    stores it without; taken for two providers, every link was dropped on a plain save). When one side is a published
-    issuer with Entra's placeholder, the other matches if it is the same with exactly one path segment in its place
-    (``common``, ``organizations`` or a tenant id), compared as a whole, never as a prefix and never across segments.
+    stores it without; taken for two providers, every link was dropped on a plain save), and with scheme and host in
+    any case (an older version that stored ``https://SSO.EXAMPLE.COM`` names the same issuer; since 1.0.9). The path
+    is compared letter by letter. When one side is a published issuer with Entra's placeholder, the other matches if it
+    is the same with exactly one path segment in its place (``common``, ``organizations`` or a tenant id), compared as
+    a whole, never as a prefix and never across segments.
+
+    Only for telling whether a configuration names one issuer. The ``iss`` of a token is compared with the issuer of
+    the discovery document character by character (``accepted_issuer``), never through this.
     """
-    left, right = normalize_issuer(a), normalize_issuer(b)
+    left, right = _comparable(a), _comparable(b)
     if not left or not right:
         return False
     for published, configured in ((left, right), (right, left)):

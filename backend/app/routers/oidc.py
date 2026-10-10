@@ -54,8 +54,8 @@ from ..db import SessionLocal
 from ..deps import CurrentAccount, OperatorAccount, client_ip, reauth_failed, reauth_guard, reauth_succeeded
 from ..meldungen import fehler
 from ..models import SIGN_IN_PASSWORD, Account
-from ..security import SESSION_COOKIE, brake, session_account, start_session
-from ..services import accounts, logs, oidc_store, totp
+from ..security import SESSION_COOKIE, brake, end_all_sessions, session_account, start_session
+from ..services import accounts, logs, oidc_store, totp, vault
 from ..services.oidc_store import SqlStore
 from ..vendor.nexoidc import OidcError, ProviderInvalid, authentik, flow, providers
 from ..vendor.nexoidc import accounts as oidc_accounts
@@ -335,7 +335,14 @@ async def _returned(slug: str, request: Request) -> RedirectResponse:
         page = _read_next(request.cookies.get(NEXT_COOKIE))
         response = _redirect(flow.arrived(arrival, page), request)
         _drop_next(response, request)
-        token = start_session(s.db, row, client_ip(request), request.headers.get("user-agent", ""))
+        # A provider trusted with the second factor has checked it: this session is not forced to set up one here.
+        token = start_session(
+            s.db,
+            row,
+            client_ip(request),
+            request.headers.get("user-agent", ""),
+            via_trusted_provider=arrival.provider.trusts_second_factor,
+        )
         _set_cookie(response, request, token)
         return response
 
@@ -453,8 +460,13 @@ def operator_unlink(
             s.db.refresh(target)
             oidc_store.note_unlinked(target, entry.label)
             s.db.commit()
+            # Whoever had come in through that identity is out. That is every browser session of the account, not
+            # only some: a session does not say which provider it began with, and the person would still be in
+            # with the identity just taken from them. With the password they come back in. As with "Sign out
+            # everywhere": the browsers here, the open vault and the terminals below.
+            end_all_sessions(s.db, account_id)
     if account_id != operator.id:
-        # Whoever had come in through that identity is out; with the password they come back in.
+        vault.lock(account_id)
         end_ssh_sessions(account_id, "signed_out")
     logger.warning("Operator unlinked an account from provider %s name=%s by=%s", entry.slug, target.name,
                    operator.name)

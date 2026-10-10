@@ -55,8 +55,11 @@ def new_token() -> str:
     return secrets.token_urlsafe(32)
 
 
-def start_session(db: Session, account: Account, ip: str, user_agent: str) -> str:
-    """Creates a browser session and returns the token for the cookie."""
+def start_session(
+    db: Session, account: Account, ip: str, user_agent: str, *, via_trusted_provider: bool = False
+) -> str:
+    """Creates a browser session and returns the token for the cookie. ``via_trusted_provider``: it began with a
+    sign-in through a provider the operator trusts with the second factor (see ``totp.setup_required``)."""
     token = new_token()
     db.add(
         AuthSession(
@@ -65,6 +68,7 @@ def start_session(db: Session, account: Account, ip: str, user_agent: str) -> st
             expires_at=utcnow() + timedelta(days=get_settings().session_days),
             ip=ip[:64],
             user_agent=user_agent[:255],
+            via_trusted_provider=via_trusted_provider,
         )
     )
     account.last_seen_at = utcnow()
@@ -73,6 +77,14 @@ def start_session(db: Session, account: Account, ip: str, user_agent: str) -> st
 
     notify.emit(notify.SIGNIN, "Sign-in", f"{account.name} signed in from {ip[:64] or 'an unknown address'}.")
     return token
+
+
+def session_via_trusted_provider(db: Session, token: str | None) -> bool:
+    """The session of this token began with a sign-in through a provider trusted with the second factor."""
+    if not token:
+        return False
+    row = db.scalar(select(AuthSession.via_trusted_provider).where(AuthSession.token_hash == hash_token(token)))
+    return bool(row)
 
 
 def session_account(db: Session, token: str | None) -> Account | None:

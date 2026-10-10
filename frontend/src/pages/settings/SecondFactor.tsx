@@ -97,7 +97,7 @@ export function SecondFactorSection({ account, oidcOnly, provider }: { account: 
   const codesText = (codes ?? []).join('\n')
 
   return (
-    <Section title={t('twofactor.title')} intro={oidcOnly ? t('twofactor.oidcOnly', { provider }) : t('twofactor.lead')}>
+    <Section title={t('twofactor.title')} intro={oidcOnly ? t('twofactor.oidcOnly', { provider }) : t('twofactor.lead', { trusts: t('oidc.admin.trustsSecondFactor') })}>
       {account.second_factor_setup_required && <Banner tone="warn">{t('twofactor.requiredBanner')}</Banner>}
       {!oidcOnly && (
         <div className="flex flex-wrap items-center gap-3">

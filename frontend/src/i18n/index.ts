@@ -10,6 +10,8 @@
 import i18n from 'i18next'
 import { initReactI18next } from 'react-i18next'
 
+import { oidcWording, type OidcWording } from '../vendor/nexoidc/oidc'
+
 type Texts = Record<string, unknown>
 
 interface LanguageEntry {
@@ -30,7 +32,7 @@ export const LANGUAGES = {
 /** The app's texts with the module's merged in. The module's keys live under `oidc`, which the app's files leave free. */
 async function textsOf(language: Language): Promise<Texts> {
   const [{ default: own }, { default: shared }] = await Promise.all([LANGUAGES[language].load(), LANGUAGES[language].oidc()])
-  return { ...own, ...shared }
+  return { ...own, ...oidcWording(shared as OidcWording, { singleAccount: false }) }
 }
 
 export type Language = keyof typeof LANGUAGES

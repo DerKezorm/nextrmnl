@@ -119,6 +119,11 @@ class AuthSession(Base):
     last_seen_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow)
     ip: Mapped[str] = mapped_column(String(64), default="")
     user_agent: Mapped[str] = mapped_column(String(255), default="")
+    #: The sign-in came through a provider that is trusted with the second factor ("The provider checks the second
+    #: factor itself"): the requirement for an own second factor does not hold for this session, as it does for a
+    #: session that began with the password. A server default, so that the version before (which knows no such
+    #: column) can still start sessions in a database this version made.
+    via_trusted_provider: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
 
 
 class OidcProvider(Base):

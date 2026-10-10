@@ -125,7 +125,9 @@ def current_account(request: Request, db: DbSession) -> Account:
     if account is None:
         raise fehler("not_signed_in", "Not signed in.", 401)
     logs.set_actor(account.name)
-    if request.url.path not in SETUP_ONLY_PATHS and totp.setup_required(db, account):
+    if request.url.path not in SETUP_ONLY_PATHS and totp.setup_required(
+        db, account, request.cookies.get(SESSION_COOKIE)
+    ):
         raise fehler("second_factor_setup_required", "Set up your second factor first.", 403)
     return account
 
@@ -167,7 +169,7 @@ def websocket_account(websocket: WebSocket, db: Session) -> Account | None:
     if not same_origin(websocket, db):
         return None
     account = session_account(db, websocket.cookies.get(SESSION_COOKIE))
-    if account is not None and totp.setup_required(db, account):
+    if account is not None and totp.setup_required(db, account, websocket.cookies.get(SESSION_COOKIE)):
         return None
     if account is not None:
         logs.set_actor(account.name)

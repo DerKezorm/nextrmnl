@@ -115,7 +115,7 @@ function SignInCard({
       <div className="border-t border-ink-700 pt-4">
         <Switch
           label={t('twofactor.requiredSwitch')}
-          hint={t('twofactor.requiredHint')}
+          hint={t('twofactor.requiredHint', { trusts: t('oidc.admin.trustsSecondFactor') })}
           checked={settings.two_factor_required}
           onChange={(value) => void save({ two_factor_required: value })}
         />

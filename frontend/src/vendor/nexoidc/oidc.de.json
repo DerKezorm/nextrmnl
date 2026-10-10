@@ -20,7 +20,8 @@
       "add": "Anbieter hinzufügen",
       "edit": "Bearbeiten",
       "remove": "Entfernen",
-      "removeConfirm": "„{{name}}“ entfernen? {{count}} Konten verlieren die Verknüpfung, {{only}} davon melden sich nur darüber an.",
+      "removeConfirm_one": "„{{name}}“ entfernen? {{count}} Konto verliert die Verknüpfung, für {{only}} davon ist es der einzige Weg herein.",
+      "removeConfirm_other": "„{{name}}“ entfernen? {{count}} Konten verlieren die Verknüpfung, für {{only}} davon ist es der einzige Weg herein.",
       "active": "aktiv",
       "inactive": "aus",
       "managed": "über authentik eingerichtet",
@@ -39,7 +40,8 @@
       "trustsSecondFactor": "Der Anbieter prüft den zweiten Faktor selbst",
       "trustsSecondFactorHint": "Aus: Wer hier einen zweiten Faktor hat, wird nach der Anmeldung über den Anbieter noch nach dem Code gefragt.",
       "scopes": "Bereiche (Scopes)",
-      "issuerChangeConfirm": "Ein anderer Aussteller ist ein anderer Anbieter. {{count}} Konten müssen sich danach neu verknüpfen."
+      "issuerChangeConfirm_one": "Ein anderer Aussteller ist ein anderer Anbieter. {{count}} Konto muss sich danach neu verknüpfen.",
+      "issuerChangeConfirm_other": "Ein anderer Aussteller ist ein anderer Anbieter. {{count}} Konten müssen sich danach neu verknüpfen."
     },
     "authentik": {
       "title": "authentik in einem Schritt",
@@ -67,7 +69,8 @@
         "answered": "Unter dieser Adresse antwortet etwas, aber nicht authentik wie erwartet (Antwort {{status}}). Prüf die Adresse; die ganze Antwort steht im Log.",
         "slug": "In authentik gehören alle Slugs, die {{app}} seiner Anwendung geben würde, schon anderen Anwendungen. Benenne den Anbieter von {{app}} dort um und versuch es noch einmal.",
         "coupled": "Solange {{app}} gekoppelt ist, kommt die Anmeldung über die Kopplung. Entkopple zuerst, dann richte authentik hier ein.",
-        "issuer_change": "Das ist ein anderes authentik als bisher, also ein anderer Aussteller. {{count}} Konten müssen sich danach neu verknüpfen."
+        "issuer_change_one": "Das ist ein anderes authentik als bisher, also ein anderer Aussteller. {{count}} Konto muss sich danach neu verknüpfen.",
+        "issuer_change_other": "Das ist ein anderes authentik als bisher, also ein anderer Aussteller. {{count}} Konten müssen sich danach neu verknüpfen."
       }
     },
     "account": {
@@ -107,6 +110,15 @@
       "scopes_invalid": "Die Bereiche müssen openid enthalten.",
       "provider_managed": "Dieser Anbieter kommt über eine Kopplung und ändert sich nur dort.",
       "provider_unknown": "Diesen Anbieter gibt es nicht mehr."
+    },
+    "single": {
+      "admin": {
+        "passwordHint": "Aus: Auch du meldest dich dann nur über einen Anbieter an. Zurück geht es an diesem Schalter oder, wenn kein Anbieter mehr hereinlässt, mit einem Befehl am Server.",
+        "addressHint": "Die Adresse, unter der du {{app}} erreichst. Die Anbieter schicken dich nach der Anmeldung dorthin zurück."
+      },
+      "error": {
+        "oidc_no_account": "Diese Identität ist hier nicht verknüpft. Herein kommt nur die Identität, die mit dem Konto von {{app}} verknüpft ist."
+      }
     }
   }
 }

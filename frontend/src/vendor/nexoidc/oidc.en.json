@@ -20,7 +20,8 @@
       "add": "Add a provider",
       "edit": "Edit",
       "remove": "Remove",
-      "removeConfirm": "Remove “{{name}}”? {{count}} accounts lose the link, {{only}} of them sign in only through it.",
+      "removeConfirm_one": "Remove “{{name}}”? {{count}} account loses the link; for {{only}} of them it is the only way in.",
+      "removeConfirm_other": "Remove “{{name}}”? {{count}} accounts lose the link; for {{only}} of them it is the only way in.",
       "active": "on",
       "inactive": "off",
       "managed": "set up through authentik",
@@ -39,7 +40,8 @@
       "trustsSecondFactor": "The provider checks the second factor itself",
       "trustsSecondFactorHint": "Off: whoever has a second factor here is asked for the code after signing in through the provider.",
       "scopes": "Scopes",
-      "issuerChangeConfirm": "Another issuer is another provider. {{count}} accounts will have to link again afterwards."
+      "issuerChangeConfirm_one": "Another issuer is another provider. {{count}} account will have to link again afterwards.",
+      "issuerChangeConfirm_other": "Another issuer is another provider. {{count}} accounts will have to link again afterwards."
     },
     "authentik": {
       "title": "authentik in one step",
@@ -67,7 +69,8 @@
         "answered": "Something answers at this address, but not authentik as expected (answer {{status}}). Check the address; the whole answer is in the log.",
         "slug": "Every slug {{app}} would give its application already belongs to another application in authentik. Rename the {{app}} provider there and try again.",
         "coupled": "While {{app}} is coupled, sign-in comes through the coupling. Uncouple first, then set up authentik here.",
-        "issuer_change": "This is another authentik than before, so another issuer. {{count}} accounts will have to link again afterwards."
+        "issuer_change_one": "This is another authentik than before, so another issuer. {{count}} account will have to link again afterwards.",
+        "issuer_change_other": "This is another authentik than before, so another issuer. {{count}} accounts will have to link again afterwards."
       }
     },
     "account": {
@@ -107,6 +110,15 @@
       "scopes_invalid": "The scopes must contain openid.",
       "provider_managed": "This provider comes through a coupling and changes only there.",
       "provider_unknown": "This provider no longer exists."
+    },
+    "single": {
+      "admin": {
+        "passwordHint": "Off: you too sign in through a provider only. To go back, use this switch, or a command on the server when no provider lets you in any more.",
+        "addressHint": "The address you reach {{app}} at. The providers send you back there after signing in."
+      },
+      "error": {
+        "oidc_no_account": "This identity is not linked here. Only the identity linked to the account of {{app}} gets in."
+      }
     }
   }
 }

@@ -158,13 +158,21 @@ def use_recovery(stored: str, code: str) -> str | None:
     return json.dumps(remaining)
 
 
-def setup_required(db: Session, account: Account) -> bool:
+def setup_required(db: Session, account: Account, token: str | None = None) -> bool:
     """The operator requires a second factor, and this password account has none yet. Such an account reaches
-    its own account page and nothing else until it enrols."""
+    its own account page and nothing else until it enrols.
+
+    Not in a session that began through a provider the operator trusts with the second factor ("The provider checks
+    the second factor itself"): that sign-in has been checked by the provider, so it is not forced to set one up
+    here. The same account signing in with its password is. ``token`` is the session cookie of the request; without
+    it (a list of other accounts, a sign-in that has no session yet) the account alone decides."""
+    from ..security import session_via_trusted_provider
+
     return (
         bool(settings_service.get(db, "two_factor_required"))
         and account.sign_in == SIGN_IN_PASSWORD
         and not has_second_factor(db, account)
+        and not session_via_trusted_provider(db, token)
     )
 
 

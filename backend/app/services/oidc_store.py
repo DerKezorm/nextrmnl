@@ -381,10 +381,16 @@ LEGACY_KEYS = ("oidc_issuer", "oidc_client_id", "oidc_client_secret_enc", "oidc_
 #: Set once the settings were looked at: an operator who later removes every entry must not get the old provider
 #: back at the next start.
 MIGRATED = "oidc_list_migrated"
+#: What the way back wrote last, as the module sums it up (``migrate.fingerprint``): the next start takes over what
+#: the version before the list changed since, and nothing else.
+FINGERPRINT = "oidc_legacy_fingerprint"
+#: The version before the list asked no code of its own after the provider (blueprint 06 "Wanderung").
+TRUSTED_BEFORE = True
 
 
-def legacy_plan(db: Session) -> migrate.Plan | None:
-    """The entry ``oidc`` and its links the old settings become; None when no provider was set up."""
+def read_legacy(db: Session) -> tuple[migrate.Legacy, list[tuple[int, str]]]:
+    """The old settings and the old column, read the one way the migration, the fingerprint and ``resync`` read them.
+    The secret is the opened one: sealed afresh every time, the stored text would give another fingerprint."""
     values = settings_service.get_all(db)
     label = str(values.get("oidc_provider_name") or "")
     legacy = migrate.Legacy(
@@ -402,8 +408,13 @@ def legacy_plan(db: Session) -> migrate.Plan | None:
             select(Account.id, Account.oidc_subject).where(Account.oidc_subject != "").order_by(Account.id)
         )
     ]
-    # nextrmnl asked no code of its own after the provider before the list: the migrated entry keeps that (06).
-    return migrate.plan(legacy, subjects, trusts_second_factor=True)
+    return legacy, subjects
+
+
+def legacy_plan(db: Session) -> migrate.Plan | None:
+    """The entry ``oidc`` and its links the old settings become; None when no provider was set up."""
+    legacy, subjects = read_legacy(db)
+    return migrate.plan(legacy, subjects, trusts_second_factor=TRUSTED_BEFORE)
 
 
 def mirror_legacy(db: Session) -> None:
@@ -412,11 +423,13 @@ def mirror_legacy(db: Session) -> None:
     back would bring a removed provider back, or let a subject into an account that gave it up.
 
     - The entry ``oidc`` gone or its issuer changed: the old settings and every old subject are emptied for good.
-    - Else the old settings follow the entry: its client (only while it is on; switched off, the old version finds no
-      client and lets nobody in through it), its name, ``auto_create`` only while on; each account's old subject is
-      its link there, and an account without one has none.
+    - Else the old settings follow the entry: its client (only while it is on and the provider checks the second
+      factor itself; otherwise the old version finds no client and lets nobody in through it, as it would without the
+      code the new version asks), its name, ``auto_create`` only while the client is there; each account's old
+      subject is its link there, and an account without one has none. Switched on again, everything is back.
 
-    Nothing is committed here; the store calls it before every commit."""
+    Last the fingerprint of what stands there, for ``migrate.resync`` at the next start. Nothing is committed here;
+    the store calls it before every commit."""
     issuer = str(settings_service.get(db, "oidc_issuer") or "")
     entry = db.scalar(select(OidcProvider).where(OidcProvider.slug == nexoidc.LEGACY_SLUG)) if issuer else None
     if issuer and (entry is None or not protocol.same_issuer(entry.issuer, issuer)):
@@ -426,6 +439,7 @@ def mirror_legacy(db: Session) -> None:
     db.flush()
     if entry is None:
         db.execute(update(Account).where(Account.oidc_subject != "").values(oidc_subject=""))
+        _remember_legacy(db)
         return
     rows = db.execute(select(OidcLink.account_id, OidcLink.subject).where(OidcLink.provider_id == entry.id))
     linked = {account_id: subject for account_id, subject in rows}
@@ -433,16 +447,25 @@ def mirror_legacy(db: Session) -> None:
         wanted = linked.get(account.id, "")
         if account.oidc_subject != wanted:
             account.oidc_subject = wanted
-    client_id = entry.client_id if entry.enabled else ""
-    secret = crypto.decrypt_secret(entry.client_secret_enc, secret_context(entry.id)) if entry.enabled else ""
+    usable = entry.enabled and entry.trusts_second_factor
+    client_id = entry.client_id if usable else ""
+    secret = crypto.decrypt_secret(entry.client_secret_enc, secret_context(entry.id)) if usable else ""
     old_secret = crypto.decrypt_secret(str(settings_service.get(db, "oidc_client_secret_enc") or ""))
     if str(settings_service.get(db, "oidc_client_id") or "") != client_id or old_secret != secret:
         sealed = crypto.encrypt_secret(secret) if secret else ""
         put_settings(db, {"oidc_client_id": client_id, "oidc_client_secret_enc": sealed})
-    shown = {"oidc_provider_name": entry.label, "oidc_auto_create": bool(entry.auto_create and entry.enabled)}
+    shown = {"oidc_provider_name": entry.label, "oidc_auto_create": bool(entry.auto_create and usable)}
     changed = {key: value for key, value in shown.items() if settings_service.get(db, key) != value}
     if changed:
         put_settings(db, changed)
+    _remember_legacy(db)
+
+
+def _remember_legacy(db: Session) -> None:
+    """The fingerprint of the old settings and subjects as they stand now (after the mirror wrote them)."""
+    db.flush()
+    legacy, subjects = read_legacy(db)
+    put_settings(db, {FINGERPRINT: migrate.fingerprint(legacy, subjects)})
 
 
 def put_settings(db: Session, changes: dict[str, object]) -> None:
@@ -463,22 +486,46 @@ def migration_due(db: Session) -> bool:
     )
 
 
+def _older_version_changed(db: Session) -> bool:
+    """The old settings or subjects differ from what the last mirror wrote: the version before the list was at work."""
+    legacy, subjects = read_legacy(db)
+    previous = str(settings_service.get(db, FINGERPRINT) or "") or None
+    return migrate.changes(previous, migrate.fingerprint(legacy, subjects)).any
+
+
 def migrate_settings(*, backup: bool = True) -> Provider | None:
-    """Once, at the first start with the list: the provider of the settings becomes the entry ``oidc`` with a link
-    per stored subject; ``/api/oidc/callback`` keeps signing in. A backup goes first (the way back). Nothing happens
-    when there was no provider or the list has entries already."""
+    """What runs at every start.
+
+    Once, the first time with the list: the provider of the settings becomes the entry ``oidc`` with a link per stored
+    subject; ``/api/oidc/callback`` keeps signing in. A backup goes first (the way back). Nothing happens when there
+    was no provider or the list has entries already.
+
+    After that, at each start, what the version before the list changed in the old settings since the last mirror (an
+    operator who went back and came up again) is taken over (``migrate.resync``), with a backup first when there is
+    something to take. Then the mirror and the fingerprint are written again, so that a start without a change in the
+    older version changes nothing. Returns the entry the first migration made, else None."""
     with SessionLocal() as db:
-        if not migration_due(db):
-            if not settings_service.get(db, MIGRATED):
-                settings_service.save(db, {MIGRATED: True})
-            return None
-    if backup:
+        due = migration_due(db)
+        if not due and not settings_service.get(db, MIGRATED):
+            settings_service.save(db, {MIGRATED: True})
+        changed = not due and _older_version_changed(db)
+    if backup and (due or changed):
         from . import backups
 
-        backups.create(kind=backups.UPDATE, note="before the sign-in provider list")
+        note = "before the sign-in provider list" if due else "before taking over the older version's sign-in settings"
+        backups.create(kind=backups.UPDATE, note=note)
     with SessionLocal() as db:
-        if not migration_due(db):
-            return None
-        entry = migrate.apply(SqlStore(db), legacy_plan(db))
-        settings_service.save(db, {MIGRATED: True})
+        store = SqlStore(db)
+        entry = None
+        if due and migration_due(db):
+            entry = migrate.apply(store, legacy_plan(db))
+            put_settings(db, {MIGRATED: True})
+        else:
+            legacy, subjects = read_legacy(db)
+            previous = str(settings_service.get(db, FINGERPRINT) or "") or None
+            done = migrate.resync(store, legacy, subjects, previous=previous, trusts_second_factor=TRUSTED_BEFORE)
+            if done.wrote:
+                logger.info("Sign-in settings of the older version taken over")
+        # Through the store: the mirror and the new fingerprint are written in the same commit.
+        store.commit()
         return entry

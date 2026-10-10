@@ -12,7 +12,7 @@ What lives here (Bauplan "Anmeldung mit OIDC und authentik", parts 01 to 03 and 
 - ``flow``: start and return as plain redirects and cookies;
 - ``accounts``: who the identity is, linking, unlinking, the second factor;
 - ``providers``: the provider list, issuer changes, removal;
-- ``migrate``: from one provider in the settings to the list;
+- ``migrate``: from one provider in the settings to the list; up again after the way back (fingerprint, resync);
 - ``coupling``: nexsuite as the provider of a coupled app, the own entries set aside and back;
 - ``authentik``: the button and the blueprint;
 - ``tls``: one TLS context for every call, read once outside the event loop (``warm()`` at the app's start).
@@ -42,7 +42,7 @@ from .model import (
 )
 from .tls import warm
 
-__version__ = "1.0.8"
+__version__ = "1.0.9"
 
 __all__ = [
     "CODES",

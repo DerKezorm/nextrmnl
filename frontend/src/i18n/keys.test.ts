@@ -1,4 +1,8 @@
-import de from './de.json'
+import shared from '../vendor/nexoidc/oidc.de.json'
+import own from './de.json'
+
+// The app loads both into one tree (i18n/index.ts).
+const de = { ...own, ...shared }
 
 const sources = import.meta.glob('../**/*.{ts,tsx}', { query: '?raw', import: 'default', eager: true }) as Record<string, string>
 
@@ -33,7 +37,6 @@ describe('translation keys used in the code', () => {
       ...['up', 'down', 'unknown'].map((reach) => `reach.${reach}`),
       ...['running', 'normal', 'failed', 'hostkey'].map((end) => `sessions.end.${end}`),
       ...['operator', 'member'].map((role) => `settings.role.${role}`),
-      ...['reached', 'signingKey', 'mapping', 'provider', 'application', 'filled'].map((step) => `signin.step.${step}`),
       ...['nexview', 'nexmail', 'nexdeck', 'nexcrate', 'nexbeat', 'nexpulse'].map((app) => `about.app.${app}`),
       ...['off', 'daily', 'weekly', 'monthly'].map((schedule) => `backups.schedule.${schedule}`),
       ...['auto', 'update', 'manual'].map((kind) => `backups.kind.${kind}`),
@@ -47,7 +50,7 @@ describe('translation keys used in the code', () => {
       // The failure reasons the server names while connecting; `terminal.fail.other` catches the rest.
       ...['target_not_allowed', 'vault_locked', 'timeout', 'unreachable', 'auth_failed', 'not_signed_in', 'connection_lost', 'disconnected_by_operator', 'other'].map((detail) => `terminal.fail.${detail}`),
       // The server's error codes, which the UI translates into sentences.
-      ...['not_signed_in', 'wrong_credentials', 'account_locked', 'vault_locked', 'password_too_short', 'target_not_allowed', 'oidc_denied', 'oidc_token_invalid'].map((code) => `errors.byCode.${code}`),
+      ...['not_signed_in', 'wrong_credentials', 'account_locked', 'vault_locked', 'password_too_short', 'target_not_allowed', 'oidc_not_configured', 'oidc_only_account', 'account_blocked', 'invite_invalid', 'provider_first'].map((code) => `errors.byCode.${code}`),
     ]
     expect(composed.filter((key) => !exists(key))).toEqual([])
   })

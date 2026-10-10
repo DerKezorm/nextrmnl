@@ -3,6 +3,7 @@ links, the OIDC redirect and the WebSocket origin check."""
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -29,23 +30,31 @@ def set_public_url(client: TestClient, value: str) -> httpx.Response:
     return client.put("/api/settings", json={"public_url": value}, headers=UI)
 
 
+def _redirect(client: TestClient) -> str:
+    """The callback the authentik button and its blueprint would give the provider."""
+    text = client.get("/api/oidc/authentik/blueprint").text
+    found = re.search(r'url: "([^"]+)"', text)
+    assert found, text
+    return found.group(1)
+
+
 def test_the_public_address_drives_invitation_links_and_the_oidc_redirect(client: TestClient, operator: dict) -> None:
     # Nothing set: the request's own address.
     assert client.get("/api/settings").json()["public_url"] == ""
-    assert client.get("/api/oidc/config").json()["redirect_uri"] == "http://testserver/api/oidc/callback"
+    assert _redirect(client) == "http://testserver/api/oidc/authentik/callback"
 
     saved = set_public_url(client, PUBLIC + "/")
     assert saved.status_code == 200, saved.text
     # Stored without the trailing slash, so that paths can simply be appended.
     assert saved.json()["public_url"] == PUBLIC
-    assert client.get("/api/oidc/config").json()["redirect_uri"] == PUBLIC + "/api/oidc/callback"
+    assert _redirect(client) == PUBLIC + "/api/oidc/authentik/callback"
     invite = client.post("/api/accounts/invites", json={"name": "sam", "role": "member"}, headers=UI)
     assert invite.status_code == 201, invite.text
     assert invite.json()["link"].startswith(PUBLIC + "/invite/")
 
     # Empty again: back to the request.
     assert set_public_url(client, "").json()["public_url"] == ""
-    assert client.get("/api/oidc/config").json()["redirect_uri"] == "http://testserver/api/oidc/callback"
+    assert _redirect(client) == "http://testserver/api/oidc/authentik/callback"
 
 
 @pytest.mark.parametrize(
@@ -71,10 +80,10 @@ def test_the_environment_is_the_fallback_when_the_setting_is_empty(
     client: TestClient, operator: dict, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(get_settings(), "public_url", "http://env.example.com/")
-    assert client.get("/api/oidc/config").json()["redirect_uri"] == "http://env.example.com/api/oidc/callback"
+    assert _redirect(client) == "http://env.example.com/api/oidc/authentik/callback"
     # The setting wins over the environment.
     assert set_public_url(client, PUBLIC).status_code == 200
-    assert client.get("/api/oidc/config").json()["redirect_uri"] == PUBLIC + "/api/oidc/callback"
+    assert _redirect(client) == PUBLIC + "/api/oidc/authentik/callback"
 
 
 def test_a_websocket_from_the_public_address_passes_the_origin_check(

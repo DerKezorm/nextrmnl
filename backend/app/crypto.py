@@ -117,18 +117,24 @@ def _server_key() -> bytes:
     return hashlib.sha256(b"nextrmnl-secrets:" + secret).digest()
 
 
-def encrypt_secret(text: str) -> str:
+def _server_aad(context: str) -> bytes:
+    # Without a context the associated data is what it always was, so every value stored before still opens. With
+    # one (``oidc-provider:<id>``), a value sealed for one place does not open in another.
+    return AAD_SERVER if not context else AAD_SERVER + b":" + context.encode("utf-8")
+
+
+def encrypt_secret(text: str, context: str = "") -> str:
     """For values the server must read on its own, stored as hex."""
     if not text:
         return ""
-    return _seal(_server_key(), text.encode("utf-8"), AAD_SERVER).hex()
+    return _seal(_server_key(), text.encode("utf-8"), _server_aad(context)).hex()
 
 
-def decrypt_secret(stored: str) -> str:
+def decrypt_secret(stored: str, context: str = "") -> str:
     if not stored:
         return ""
     try:
-        return _open(_server_key(), bytes.fromhex(stored), AAD_SERVER).decode("utf-8")
+        return _open(_server_key(), bytes.fromhex(stored), _server_aad(context)).decode("utf-8")
     except (InvalidTag, ValueError):
         # A different secret.key than the one that encrypted it: the value is lost, not the app.
         return ""

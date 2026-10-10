@@ -2,7 +2,9 @@ import { useTranslation } from 'react-i18next'
 import { Link, useParams } from 'react-router-dom'
 
 import { api } from '../../api/client'
+import type { OidcButton } from '../../api/types'
 import { useAuth } from '../../auth'
+import { ProviderButtons } from '../../components/ProviderButtons'
 import { Banner, PageLoading } from '../../components/ui'
 import { useLoad } from '../../lib/useLoad'
 import { AuthFrame } from './AuthFrame'
@@ -14,6 +16,8 @@ export function InvitePage() {
   const { token = '' } = useParams()
   const { acceptInvite } = useAuth()
   const invite = useLoad(() => api.get<{ name: string; role: string }>(`/api/invites/${encodeURIComponent(token)}`), [token])
+  // "Continue with …": the invitation travels along to the provider (shared sign-in blueprint, part 04).
+  const providers = useLoad(() => api.get<OidcButton[]>('/api/oidc/providers').catch(() => [] as OidcButton[]))
 
   return (
     <AuthFrame wide>
@@ -27,13 +31,16 @@ export function InvitePage() {
           </Link>
         </div>
       ) : (
-        <AccountForm
-          title={t('auth.inviteTitle')}
-          lead={t('auth.inviteLead', { role: t(`settings.role.${invite.data.role}`) })}
-          submitLabel={t('auth.inviteSubmit')}
-          initialName={invite.data.name}
-          onSubmit={(name, password) => acceptInvite(token, name, password)}
-        />
+        <div className="flex flex-col gap-4">
+          <AccountForm
+            title={t('auth.inviteTitle')}
+            lead={t('auth.inviteLead', { role: t(`settings.role.${invite.data.role}`) })}
+            submitLabel={t('auth.inviteSubmit')}
+            initialName={invite.data.name}
+            onSubmit={(name, password) => acceptInvite(token, name, password)}
+          />
+          <ProviderButtons providers={providers.data ?? []} invite={token} />
+        </div>
       )}
     </AuthFrame>
   )

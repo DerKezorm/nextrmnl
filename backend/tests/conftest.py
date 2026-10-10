@@ -29,6 +29,8 @@ from app.models import (  # noqa: E402
     ConnectionShare,
     HostKey,
     Invite,
+    OidcLink,
+    OidcProvider,
     SessionRecord,
     Setting,
     VaultKey,
@@ -45,7 +47,7 @@ PASSWORD = "correct-horse-battery"
 def clean_db() -> Iterator[None]:
     init_db()
     with SessionLocal() as db:
-        for model in (ApiKey, SessionRecord, VaultPassword, ConnectionShare, Connection, VaultKey, HostKey, Invite, AuthSession, Account, Setting):
+        for model in (OidcLink, OidcProvider, ApiKey, SessionRecord, VaultPassword, ConnectionShare, Connection, VaultKey, HostKey, Invite, AuthSession, Account, Setting):
             db.execute(delete(model))
         db.commit()
     vault.lock_all()
@@ -85,3 +87,7 @@ def invite_member(client: TestClient, name: str = "alex") -> TestClient:
     accepted = member.post(f"/api/invites/{token}", json={"name": name, "password": PASSWORD}, headers=UI)
     assert accepted.status_code == 200, accepted.text
     return member
+
+
+# The fake sign-in provider of nextrmnl's own tests around OIDC (the shared contract tests bring their own).
+from tests.oidc_helpers import provider  # noqa: E402, F401

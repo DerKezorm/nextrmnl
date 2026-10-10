@@ -19,8 +19,12 @@ export interface Account {
   two_factor_recovery_left: number
   /** The operator requires a second factor and this account has none yet: only the account page is open. */
   second_factor_setup_required: boolean
-  /** Linked to an identity at the OIDC provider. */
-  oidc_linked: boolean
+  /** How many sign-in providers the account is linked to. */
+  oidc_links: number
+  /** Providers the operator unlinked this account from, until it says it saw it. */
+  oidc_unlinked: string[]
+  /** In the operator's list only: the providers the account is linked to. */
+  providers?: { id: number; slug: string; label: string }[]
   vault: VaultState
   prefs: Record<string, unknown>
   created_at: string
@@ -221,7 +225,6 @@ export interface Settings {
   backup_keep: number
   password_login: boolean
   two_factor_required: boolean
-  oidc_auto_create: boolean
   /** The address people use to reach nextrmnl; empty means the environment or the request decides. */
   public_url: string
 }
@@ -324,31 +327,78 @@ export interface VaultImportResult {
   skipped_passwords: number
 }
 
-export interface OidcState {
-  enabled: boolean
-  provider_name: string
+/** An active sign-in provider as the sign-in and invitation pages see it. */
+export interface OidcButton {
+  slug: string
+  label: string
 }
 
-export interface OidcConfig {
-  configured: boolean
+/** How one signs in here (`GET /api/auth/methods`). */
+export interface SignInMethods {
+  password: boolean
+  providers: OidcButton[]
+}
+
+/** An active provider and whether the own account is linked to it (`GET /api/oidc/me`). */
+export interface MyProvider extends OidcButton {
+  linked: boolean
+}
+
+/** An entry of the provider list as the operator sees it (never the secret). */
+export interface OidcProvider {
+  id: number
+  slug: string
+  label: string
   issuer: string
   client_id: string
-  provider_name: string
+  has_secret: boolean
+  scopes: string
+  enabled: boolean
+  auto_create: boolean
+  trusts_second_factor: boolean
+  managed: string
+  position: number
   redirect_uri: string
+  links: number
+  editable: boolean
 }
 
-export type AuthentikStepKey = 'reached' | 'signingKey' | 'mapping' | 'provider' | 'application' | 'filled'
+export interface OidcProviderForm {
+  label: string
+  slug?: string
+  issuer: string
+  client_id: string
+  client_secret: string
+  scopes: string
+  enabled: boolean
+  auto_create: boolean
+  trusts_second_factor: boolean
+}
+
+export interface OidcImpact {
+  issuer_change: number
+  count: number
+  only: number
+  only_names: string[]
+}
 
 export interface AuthentikStep {
-  key: AuthentikStepKey
+  key: string
   ok: boolean
   detail: string
+  reason?: string
+  status?: number
 }
 
 export interface AuthentikResult {
+  ok: boolean
   steps: AuthentikStep[]
   client_id: string
   issuer: string
+  provider_id: number | null
+  links_dropped: number
+  /** With the reason `issuer_change`: how many accounts would have to link again. */
+  count?: number
 }
 
 /** A command an account keeps at hand; only its owner sees it. */

@@ -18,12 +18,20 @@ interface LanguageEntry {
   /** The name in the language itself, for screen readers and the tooltip. */
   name: string
   load: () => Promise<{ default: Texts }>
+  /** The words of the shared sign-in module (`oidc.…`), the same in every nex app; merged into the texts. */
+  oidc: () => Promise<{ default: Texts }>
 }
 
 export const LANGUAGES = {
-  de: { label: 'DE', name: 'Deutsch', load: () => import('./de.json') },
-  en: { label: 'EN', name: 'English', load: () => import('./en.json') },
+  de: { label: 'DE', name: 'Deutsch', load: () => import('./de.json'), oidc: () => import('../vendor/nexoidc/oidc.de.json') },
+  en: { label: 'EN', name: 'English', load: () => import('./en.json'), oidc: () => import('../vendor/nexoidc/oidc.en.json') },
 } as const satisfies Record<string, LanguageEntry>
+
+/** The app's texts with the module's merged in. The module's keys live under `oidc`, which the app's files leave free. */
+async function textsOf(language: Language): Promise<Texts> {
+  const [{ default: own }, { default: shared }] = await Promise.all([LANGUAGES[language].load(), LANGUAGES[language].oidc()])
+  return { ...own, ...shared }
+}
 
 export type Language = keyof typeof LANGUAGES
 export const SUPPORTED_LANGUAGES = Object.keys(LANGUAGES) as Language[]
@@ -54,17 +62,17 @@ function initialLanguage(): Language {
 
 async function load(language: Language): Promise<void> {
   if (i18n.hasResourceBundle(language, 'translation')) return
-  const { default: texts } = await LANGUAGES[language].load()
-  i18n.addResourceBundle(language, 'translation', texts)
+  i18n.addResourceBundle(language, 'translation', await textsOf(language))
 }
 
 export async function startI18n(language: Language = initialLanguage()): Promise<void> {
-  const { default: texts } = await LANGUAGES[language].load()
+  const texts = await textsOf(language)
   await i18n.use(initReactI18next).init({
     resources: { [language]: { translation: texts } },
     lng: language,
     fallbackLng: false,
-    interpolation: { escapeValue: false },
+    // `{{app}}` in the module's words is the name of this app.
+    interpolation: { escapeValue: false, defaultVariables: { app: 'nextrmnl' } },
   })
   document.documentElement.lang = language
 }

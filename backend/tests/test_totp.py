@@ -306,7 +306,7 @@ def test_oidc_only_accounts_have_no_second_factor_here(client: TestClient, opera
     from app.security import start_session
 
     with SessionLocal() as db:
-        account = Account(name="idp-user", role="member", sign_in="oidc", oidc_subject="sub-1", email="u@example.com")
+        account = Account(name="idp-user", role="member", sign_in="oidc", email="u@example.com")
         db.add(account)
         db.commit()
         token = start_session(db, account, "127.0.0.1", "tests")

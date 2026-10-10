@@ -2,14 +2,14 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useSearchParams } from 'react-router-dom'
 
-import { api, downloadFile, errorMessage, errorText } from '../api/client'
-import type { Account, AuthentikResult, AuthentikStepKey, InviteInfo, OidcConfig, OidcState, Settings, TargetsMode } from '../api/types'
+import { api, errorMessage } from '../api/client'
+import type { Account, InviteInfo, MyProvider, Settings, TargetsMode } from '../api/types'
 import { useAuth } from '../auth'
 import { Dialog } from '../components/Dialog'
 import { useNotice } from '../components/Notice'
 import { Symbol } from '../components/Symbol'
 import { TabRow } from '../components/TabRow'
-import { Badge, Banner, Button, Field, PageHeader, PageLoading, Section, SelectField, Spinner, Switch } from '../components/ui'
+import { Badge, Banner, Button, Field, PageHeader, PageLoading, Section, SelectField, Switch } from '../components/ui'
 import { writeClipboard } from '../lib/clipboard'
 import { endOfDay, isPast, toDateInput, todayInput } from '../lib/dates'
 import { formatDateTime, formatRelative } from '../lib/format'
@@ -17,11 +17,13 @@ import { MIN_PASSWORD } from '../lib/rules'
 import { cleanFontName, PREFS_EVENT, setTerminalPref, terminalPrefs, type TerminalPrefs } from '../lib/terminalPrefs'
 import { FIXED_SCHEMES, isScheme, SCHEME_NAMES, SCHEMES } from '../lib/terminalSchemes'
 import { useLoad } from '../lib/useLoad'
+import { AccountProviders } from './settings/AccountProviders'
 import { ApiKeysSection } from './settings/ApiKeys'
 import { BackupTab } from './settings/BackupTab'
 import { LogTab } from './settings/LogTab'
 import { NotificationsSection } from './settings/Notifications'
 import { SecondFactorSection } from './settings/SecondFactor'
+import { SignInCards } from './settings/SignInCards'
 
 const TABS = ['terminal', 'account', 'accounts', 'signin', 'security', 'backup', 'logs'] as const
 type Tab = (typeof TABS)[number]
@@ -186,57 +188,18 @@ function TerminalSettings() {
   )
 }
 
-/** The own account: sign-in, link to the OIDC provider, password. For every role. */
+/** The own account: sign-in, its providers, second factor, password. For every role. */
 function AccountTab() {
   const { t } = useTranslation()
   const notify = useNotice()
   const { account, refresh } = useAuth()
-  const [params, setParams] = useSearchParams()
-  const oidc = useLoad(() => api.get<OidcState>('/api/oidc/state').catch(() => ({ enabled: false, provider_name: '' })))
+  const mine = useLoad(() => api.get<MyProvider[]>('/api/oidc/me').catch(() => [] as MyProvider[]))
   const [current, setCurrent] = useState('')
   const [next, setNext] = useState('')
   const [repeat, setRepeat] = useState('')
   const [busy, setBusy] = useState(false)
-  const [linking, setLinking] = useState(false)
-  const [linkPassword, setLinkPassword] = useState('')
-  const [error, setError] = useState<string | null>(params.get('error') ? errorText(params.get('error')) || t('errors.generic') : null)
-  const provider = oidc.data?.provider_name || 'OIDC'
-  const linkedNow = params.get('linked') === '1'
+  const [error, setError] = useState<string | null>(null)
   const valid = current.length > 0 && next.length >= MIN_PASSWORD && repeat === next
-
-  useEffect(() => {
-    // After the way back from the provider: fetch the account state fresh and remove the marker from the address.
-    if (!linkedNow && !params.get('error')) return
-    void refresh()
-    setParams({ tab: 'account' }, { replace: true })
-  }, [linkedNow, params, refresh, setParams])
-
-  async function unlink() {
-    setBusy(true)
-    try {
-      await api.delete('/api/oidc/link')
-      await refresh()
-      notify(t('account.unlinked'))
-    } catch (caught) {
-      setError(errorMessage(caught))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  // Linking is a POST with the password: the server answers with the provider's address, the browser goes there.
-  async function startLink() {
-    setBusy(true)
-    setError(null)
-    try {
-      const result = await api.post<{ url: string }>('/api/oidc/link/start', { password: linkPassword })
-      setLinkPassword('')
-      window.location.assign(result.url)
-    } catch (caught) {
-      setError(errorMessage(caught))
-      setBusy(false)
-    }
-  }
 
   async function signOutEverywhere() {
     setBusy(true)
@@ -268,6 +231,7 @@ function AccountTab() {
 
   if (!account) return null
   const oidcOnly = account.sign_in === 'oidc'
+  const provider = (mine.data ?? []).filter((entry) => entry.linked).map((entry) => entry.label).join(', ') || 'OIDC'
 
   return (
     <div className="flex flex-col gap-6">
@@ -282,72 +246,15 @@ function AccountTab() {
           <dt className="text-mist-600">{t('settings.tabSignin')}</dt>
           <dd className="text-mist-100">{oidcOnly ? t('account.signInOidc', { provider }) : t('account.signInPassword')}</dd>
         </dl>
-        {error && !linking && <Banner tone="bad">{error}</Banner>}
-        {linkedNow && <Banner tone="ok">{t('account.linkedNow')}</Banner>}
         <div className="flex flex-wrap items-center gap-3">
-          <Button variant="ghost" size="sm" loading={busy && !linking} onClick={() => void signOutEverywhere()}>
+          <Button variant="ghost" size="sm" loading={busy} onClick={() => void signOutEverywhere()}>
             {t('account.signOutEverywhere')}
           </Button>
           <p className="text-xs text-mist-500">{t('account.signOutEverywhereHint')}</p>
         </div>
       </Section>
 
-      {oidc.data?.enabled && !oidcOnly && (
-        <Section title={t('account.linkTitle', { provider })} intro={t('account.linkLead', { provider })}>
-          <div className="flex flex-wrap items-center gap-3">
-            <p className="text-sm text-mist-300">{account.oidc_linked ? t('account.linked', { provider }) : t('account.notLinked')}</p>
-            {account.oidc_linked ? (
-              <Button variant="ghost" size="sm" loading={busy} onClick={() => void unlink()}>
-                {t('account.unlink')}
-              </Button>
-            ) : (
-              <Button size="sm" onClick={() => setLinking(true)}>
-                <Symbol name="shield" className="h-3.5 w-3.5" />
-                {t('account.link', { provider })}
-              </Button>
-            )}
-          </div>
-        </Section>
-      )}
-
-      <Dialog
-        open={linking}
-        title={t('account.link', { provider })}
-        onClose={() => {
-          setLinking(false)
-          setLinkPassword('')
-          setError(null)
-        }}
-        footer={
-          <>
-            <Button
-              variant="ghost"
-              onClick={() => {
-                setLinking(false)
-                setLinkPassword('')
-                setError(null)
-              }}
-            >
-              {t('common.cancel')}
-            </Button>
-            <Button loading={busy} disabled={!linkPassword} onClick={() => void startLink()}>
-              {t('account.link', { provider })}
-            </Button>
-          </>
-        }
-      >
-        <form
-          className="flex flex-col gap-4"
-          onSubmit={(event) => {
-            event.preventDefault()
-            if (linkPassword) void startLink()
-          }}
-        >
-          <p className="text-sm text-mist-300">{t('account.linkPasswordLead', { provider })}</p>
-          <Field label={t('account.linkPassword')} type="password" autoComplete="current-password" value={linkPassword} onChange={(event) => setLinkPassword(event.target.value)} autoFocus />
-          {error && <Banner tone="bad">{error}</Banner>}
-        </form>
-      </Dialog>
+      <AccountProviders account={account} providers={mine.data ?? []} reload={mine.reload} refresh={refresh} />
 
       <SecondFactorSection account={account} oidcOnly={oidcOnly} provider={provider} />
 
@@ -370,6 +277,11 @@ function AccountTab() {
               onChange={(event) => setNext(event.target.value)}
             />
             <Field label={t('auth.passwordRepeat')} type="password" autoComplete="new-password" value={repeat} error={repeat.length > 0 && repeat !== next ? t('auth.passwordMismatch') : null} onChange={(event) => setRepeat(event.target.value)} />
+            {error && (
+              <div className="sm:col-span-3">
+                <Banner tone="bad">{error}</Banner>
+              </div>
+            )}
             <div className="sm:col-span-3">
               <Button type="submit" disabled={!valid} loading={busy}>
                 {t('common.save')}
@@ -398,7 +310,33 @@ function AccountSettings() {
   const [removing, setRemoving] = useState<Account | null>(null)
   const [resetting, setResetting] = useState<Account | null>(null)
   const [forcing, setForcing] = useState<Account | null>(null)
+  const [unlinking, setUnlinking] = useState<{ account: Account; provider: { id: number; label: string } } | null>(null)
+  const [unlinkPassword, setUnlinkPassword] = useState('')
+  const [unlinkError, setUnlinkError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+
+  function closeUnlink() {
+    setUnlinking(null)
+    setUnlinkPassword('')
+    setUnlinkError(null)
+  }
+
+  // The operator takes an account's link to a provider, with the own password; the account is told on its page.
+  async function unlinkAccount() {
+    if (!unlinking) return
+    setBusy(true)
+    setUnlinkError(null)
+    try {
+      await api.delete(`/api/oidc/admin/accounts/${unlinking.account.id}/links/${unlinking.provider.id}`, { password: unlinkPassword })
+      notify(t('signin.unlinkDone', { name: unlinking.account.name, provider: unlinking.provider.label }))
+      closeUnlink()
+      void accounts.reload()
+    } catch (error) {
+      setUnlinkError(errorMessage(error))
+    } finally {
+      setBusy(false)
+    }
+  }
 
   async function forceSignOut() {
     if (!forcing) return
@@ -522,6 +460,11 @@ function AccountSettings() {
                     {isMe && <span className="text-xs text-mist-500">({t('settings.you')})</span>}
                     <Badge tone={account.role === 'operator' ? 'accent' : 'neutral'}>{t(`settings.role.${account.role}`)}</Badge>
                     {account.two_factor && <Badge tone="neutral">{t('twofactor.title')}</Badge>}
+                    {(account.providers ?? []).map((provider) => (
+                      <Badge key={provider.id} tone="accent">
+                        {provider.label}
+                      </Badge>
+                    ))}
                     {account.expires_at &&
                       (isPast(account.expires_at) ? (
                         <Badge tone="bad">{t('expiry.ranOut')}</Badge>
@@ -550,6 +493,11 @@ function AccountSettings() {
                         {t('expiry.button')}
                       </Button>
                     )}
+                    {(account.providers ?? []).map((provider) => (
+                      <Button key={provider.id} variant="ghost" size="sm" onClick={() => setUnlinking({ account, provider })}>
+                        {t('signin.unlinkTitle')}: {provider.label}
+                      </Button>
+                    ))}
                     {account.two_factor && (
                       <Button variant="ghost" size="sm" onClick={() => setResetting(account)}>
                         {t('twofactor.reset')}
@@ -689,6 +637,34 @@ function AccountSettings() {
       </Dialog>
 
       <Dialog
+        open={unlinking !== null}
+        title={unlinking ? `${t('signin.unlinkTitle')}: ${unlinking.provider.label}` : ''}
+        onClose={closeUnlink}
+        footer={
+          <>
+            <Button variant="ghost" onClick={closeUnlink}>
+              {t('common.cancel')}
+            </Button>
+            <Button variant="danger" loading={busy} disabled={!unlinkPassword} onClick={() => void unlinkAccount()}>
+              {t('signin.unlinkTitle')}
+            </Button>
+          </>
+        }
+      >
+        <form
+          className="flex flex-col gap-4"
+          onSubmit={(event) => {
+            event.preventDefault()
+            if (unlinkPassword) void unlinkAccount()
+          }}
+        >
+          <p className="text-sm text-mist-300">{t('signin.unlinkLead', { name: unlinking?.account.name ?? '', provider: unlinking?.provider.label ?? '' })}</p>
+          <Field label={t('signin.unlinkPassword')} type="password" autoComplete="current-password" value={unlinkPassword} onChange={(event) => setUnlinkPassword(event.target.value)} autoFocus />
+          {unlinkError && <Banner tone="bad">{unlinkError}</Banner>}
+        </form>
+      </Dialog>
+
+      <Dialog
         open={forcing !== null}
         title={t('settings.forceSignOutTitle', { name: forcing?.name ?? '' })}
         onClose={() => setForcing(null)}
@@ -705,243 +681,6 @@ function AccountSettings() {
       >
         <Banner tone="warn">{t('settings.forceSignOutText', { name: forcing?.name ?? '' })}</Banner>
       </Dialog>
-    </div>
-  )
-}
-
-const AUTHENTIK_STEPS: AuthentikStepKey[] = ['reached', 'signingKey', 'mapping', 'provider', 'application', 'filled']
-
-/** The public address: invitation links, the OIDC return address and the WebSocket origin check hang on it. */
-function PublicAddress({ value, configured, onSave }: { value: string; configured: boolean; onSave: (url: string) => Promise<void> }) {
-  const { t } = useTranslation()
-  const [draft, setDraft] = useState(value)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  async function save() {
-    setBusy(true)
-    setError(null)
-    try {
-      await onSave(draft.trim())
-    } catch (caught) {
-      setError(errorMessage(caught))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <Section title={t('signin.publicUrlTitle')} intro={t('signin.publicUrlHint')}>
-      <div className="grid gap-4 sm:grid-cols-[1fr_auto] sm:items-start">
-        <Field label={t('signin.publicUrl')} value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="https://nextrmnl.example.com" spellCheck={false} error={error} />
-        <Button className="sm:mt-6" loading={busy} disabled={draft.trim() === value} onClick={() => void save()}>
-          {t('common.save')}
-        </Button>
-      </div>
-      {configured && <Banner tone="warn">{t('signin.publicUrlNote')}</Banner>}
-    </Section>
-  )
-}
-
-function SignInSettings() {
-  const { t } = useTranslation()
-  const notify = useNotice()
-  const config = useLoad(() => api.get<OidcConfig>('/api/oidc/config'))
-  const settings = useLoad(() => api.get<Settings>('/api/settings'))
-  // null until the person types: then the address of an authentik that is already set up is offered,
-  // read from the issuer, so that running the setup again only needs a fresh token.
-  const [url, setUrl] = useState<string | null>(null)
-  const authentikBase = config.data?.provider_name === 'authentik' ? config.data.issuer.replace(/\/application\/o\/[^/]+\/?$/, '') : ''
-  const urlValue = url ?? authentikBase
-  const [token, setToken] = useState('')
-  const [result, setResult] = useState<AuthentikResult | null>(null)
-  const [running, setRunning] = useState(false)
-  const [manual, setManual] = useState(false)
-  const [issuer, setIssuer] = useState('')
-  const [clientId, setClientId] = useState('')
-  const [clientSecret, setClientSecret] = useState('')
-  const [providerName, setProviderName] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const redirect = config.data?.redirect_uri ?? ''
-
-  async function setUp() {
-    setRunning(true)
-    setError(null)
-    setResult(null)
-    try {
-      setResult(await api.post<AuthentikResult>('/api/oidc/authentik/setup', { url: urlValue.trim(), token }))
-      setToken('')
-      void config.reload()
-    } catch (caught) {
-      setError(errorMessage(caught))
-    } finally {
-      setRunning(false)
-    }
-  }
-
-  async function saveManual() {
-    setBusy(true)
-    setError(null)
-    try {
-      await api.put('/api/oidc/config', { issuer: issuer.trim(), client_id: clientId.trim(), client_secret: clientSecret, provider_name: providerName.trim() })
-      setClientSecret('')
-      setManual(false)
-      void config.reload()
-      notify(t('signin.saved'))
-    } catch (caught) {
-      setError(errorMessage(caught))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  async function removeOidc() {
-    try {
-      await api.delete('/api/oidc/config')
-      void config.reload()
-    } catch (caught) {
-      notify(errorMessage(caught))
-    }
-  }
-
-  async function saveRule(values: Partial<Settings>) {
-    try {
-      settings.set(await api.put<Settings>('/api/settings', values))
-    } catch (caught) {
-      notify(errorMessage(caught))
-    }
-  }
-
-  // Errors stay in the field; the return address shown below follows the new value.
-  async function savePublicUrl(publicUrl: string) {
-    settings.set(await api.put<Settings>('/api/settings', { public_url: publicUrl }))
-    void config.reload()
-    notify(t('signin.publicUrlSaved'))
-  }
-
-  const configured = config.data?.configured ?? false
-
-  return (
-    <div className="flex flex-col gap-6">
-      {settings.data && <PublicAddress key={settings.data.public_url} value={settings.data.public_url} configured={configured} onSave={savePublicUrl} />}
-      {configured && (
-        <Section
-          title={t('signin.configuredTitle')}
-          aside={
-            <Button variant="ghost" size="sm" onClick={() => void removeOidc()}>
-              {t('signin.remove')}
-            </Button>
-          }
-        >
-          <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-sm">
-            <dt className="text-mist-600">{t('signin.provider')}</dt>
-            <dd className="text-mist-100">{config.data?.provider_name || 'OIDC'}</dd>
-            <dt className="text-mist-600">{t('signin.issuer')}</dt>
-            <dd className="font-mono text-xs text-mist-200 break-all">{config.data?.issuer}</dd>
-            <dt className="text-mist-600">{t('signin.clientId')}</dt>
-            <dd className="font-mono text-xs text-mist-200 break-all">{config.data?.client_id}</dd>
-          </dl>
-        </Section>
-      )}
-
-      <Section title={t('signin.authentikTitle')} intro={t('signin.authentikLead')} aside={<Badge tone="accent">{t('signin.recommended')}</Badge>}>
-        {result === null && !running ? (
-          <>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Field label={t('signin.authentikUrl')} value={urlValue} onChange={(event) => setUrl(event.target.value)} placeholder="https://auth.example.com" spellCheck={false} />
-              <Field label={t('signin.token')} type="password" value={token} onChange={(event) => setToken(event.target.value)} autoComplete="off" hint={t('signin.tokenHint')} />
-            </div>
-            {error && <Banner tone="bad">{error}</Banner>}
-            <div className="flex flex-wrap items-center gap-3">
-              <Button disabled={!token.trim() || !urlValue.trim()} onClick={() => void setUp()}>
-                <Symbol name="check" />
-                {t('signin.setUp')}
-              </Button>
-              <Button variant="link" onClick={() => void downloadFile('/api/oidc/authentik/blueprint', 'nextrmnl-authentik.yaml').catch((caught) => notify(errorMessage(caught)))}>
-                <Symbol name="download" className="h-3.5 w-3.5" />
-                {t('signin.blueprint')}
-              </Button>
-            </div>
-          </>
-        ) : (
-          <ol className="flex flex-col gap-2.5">
-            {AUTHENTIK_STEPS.map((step) => {
-              const done = result?.steps.find((entry) => entry.key === step)
-              const state = done ? (done.ok ? 'done' : 'failed') : running && !result ? 'running' : 'waiting'
-              return (
-                <li key={step} className="flex items-start gap-3 text-sm">
-                  <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center">
-                    {state === 'done' && <Symbol name="check" className="h-4 w-4 text-ok-500" />}
-                    {state === 'failed' && <Symbol name="warn" className="h-4 w-4 text-bad-500" />}
-                    {state === 'running' && <Spinner className="h-4 w-4 text-accent-400" />}
-                    {state === 'waiting' && <span className="h-1.5 w-1.5 rounded-full bg-ink-600" />}
-                  </span>
-                  <span className={state === 'waiting' ? 'text-mist-600' : 'text-mist-200'}>
-                    {t(`signin.step.${step}`, { redirect })}
-                    {done?.detail && <span className="block text-xs text-mist-500">{done.detail}</span>}
-                  </span>
-                </li>
-              )
-            })}
-          </ol>
-        )}
-        {result && result.steps.every((step) => step.ok) && <Banner tone="ok">{t('signin.doneText')}</Banner>}
-        {result && result.steps.some((step) => !step.ok) && <Banner tone="bad">{t('signin.failedText')}</Banner>}
-        {result && (
-          <div className="flex flex-wrap gap-2">
-            <Button variant="ghost" onClick={() => setResult(null)}>
-              {t('signin.again')}
-            </Button>
-          </div>
-        )}
-      </Section>
-
-      <Section
-        title={t('signin.manualTitle')}
-        intro={t('signin.manualLead')}
-        aside={
-          <Button variant="ghost" size="sm" onClick={() => setManual(!manual)} aria-expanded={manual}>
-            {manual ? t('signin.hide') : t('signin.show')}
-          </Button>
-        }
-      >
-        {manual && (
-          <>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Field label={t('signin.issuer')} value={issuer} onChange={(event) => setIssuer(event.target.value)} placeholder="https://id.example.com/realms/home" spellCheck={false} />
-              <Field label={t('signin.provider')} value={providerName} onChange={(event) => setProviderName(event.target.value)} placeholder="Keycloak" />
-              <Field label={t('signin.clientId')} value={clientId} onChange={(event) => setClientId(event.target.value)} placeholder="nextrmnl" spellCheck={false} />
-              <Field label={t('signin.clientSecret')} type="password" value={clientSecret} onChange={(event) => setClientSecret(event.target.value)} autoComplete="off" />
-              <div className="flex flex-col gap-1.5 sm:col-span-2">
-                <p className="text-sm font-medium text-mist-300">{t('signin.redirect')}</p>
-                <div className="flex items-center gap-2 rounded-xl border border-ink-700 bg-ink-900 px-3 py-2">
-                  <code className="min-w-0 flex-1 truncate font-mono text-xs text-mist-200">{redirect}</code>
-                  <button type="button" onClick={() => void writeClipboard(redirect).then((ok) => notify(ok ? t('vault.copied') : t('clipboard.copyFailed')))} className="rounded-full p-1 text-mist-500 hover:text-mist-100" aria-label={t('signin.copyRedirect')}>
-                    <Symbol name="copy" className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              </div>
-            </div>
-            {error && <Banner tone="bad">{error}</Banner>}
-            <div>
-              <Button disabled={!issuer.trim() || !clientId.trim() || !clientSecret} loading={busy} onClick={() => void saveManual()}>
-                {t('common.save')}
-              </Button>
-            </div>
-          </>
-        )}
-      </Section>
-
-      <Section title={t('signin.rulesTitle')}>
-        {settings.data && (
-          <>
-            <Switch label={t('signin.autoCreate')} hint={t('signin.autoCreateHint')} checked={settings.data.oidc_auto_create} disabled={!configured} onChange={(value) => void saveRule({ oidc_auto_create: value })} />
-            <Switch label={t('signin.passwordLogin')} hint={t('signin.passwordLoginHint')} checked={settings.data.password_login} disabled={!configured} onChange={(value) => void saveRule({ password_login: value })} />
-          </>
-        )}
-        <Banner>{t('signin.vaultNote')}</Banner>
-      </Section>
     </div>
   )
 }
@@ -1007,10 +746,6 @@ function SecuritySettings() {
         )}
         {error && <Banner tone="bad">{error}</Banner>}
         {data.targets_mode === 'all' && <Banner tone="warn">{t('security.targetsAllWarn')}</Banner>}
-      </Section>
-
-      <Section title={t('twofactor.requiredTitle')}>
-        <Switch label={t('twofactor.requiredSwitch')} hint={t('twofactor.requiredHint')} checked={data.two_factor_required} onChange={(value) => void save({ two_factor_required: value })} />
       </Section>
 
       {/* The second way out, next to the targets, which is why it is here and not on the About page. */}
@@ -1079,7 +814,7 @@ export function SettingsPage() {
       {tab === 'terminal' && <TerminalSettings />}
       {tab === 'account' && <AccountTab />}
       {tab === 'accounts' && <AccountSettings />}
-      {tab === 'signin' && <SignInSettings />}
+      {tab === 'signin' && <SignInCards />}
       {tab === 'security' && <SecuritySettings />}
       {tab === 'backup' && <BackupTab />}
       {tab === 'logs' && <LogTab />}

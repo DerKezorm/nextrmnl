@@ -52,6 +52,8 @@ const SYMBOLS = {
   info: [{ d: 'M12 20.5a8.5 8.5 0 1 0 0-17 8.5 8.5 0 0 0 0 17Z' }, { d: 'M12 11v5.5M12 7.8v.2' }],
   warn: [{ d: 'M12 4 2.8 19.5h18.4L12 4Z' }, { d: 'M12 10v4.5M12 17v.2' }],
   plus: [{ d: 'M12 5v14M5 12h14' }],
+  // Six dots: the handle to drag an entry to another place in a list.
+  grip: [{ d: 'M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01' }],
   trash: [{ d: 'M5 7h14' }, { d: 'M9.5 7V5h5v2' }, { d: 'M6.5 7l.8 12.1a1 1 0 0 0 1 .9h7.4a1 1 0 0 0 1-.9L17.5 7' }],
   copy: [{ d: 'M8.5 8.5h11v11h-11z' }, { d: 'M15.5 8.5V4.5h-11v11h4' }],
   up: [{ d: 'M12 19V5M5.5 11.5 12 5l6.5 6.5' }],

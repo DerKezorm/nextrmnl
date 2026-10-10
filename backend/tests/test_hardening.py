@@ -17,14 +17,13 @@ from app.config import get_settings
 from app.db import SessionLocal
 from app.main import app
 from app.models import Account, Connection
-from app.routers import oidc as oidc_router
 from app.routers.sessions import _disposition
 from app.security import MAX_FAILURES, brake
 from app.services import accounts, backups, ssh, vault, vault_file
-from app.services.oidc import Identity
 from tests.conftest import PASSWORD, UI, invite_member, sign_in
 from tests.helpers_sshd import PASSWORD as SSH_PASSWORD
 from tests.helpers_sshd import Sshd, connect_ws, open_session, receive_json, running_sshd
+from tests.oidc_helpers import FakeProvider, add_provider
 from tests.test_ssh import make_connection
 from tests.test_totp import Clock, code_step, enrol, fresh_code, password_step
 
@@ -109,8 +108,11 @@ def test_an_unknown_name_costs_a_password_check_too(client: TestClient, operator
     assert len(calls) == 1 and calls[0].startswith("$argon2")
 
 
-def test_password_login_off_answers_members_and_strangers_alike(client: TestClient, operator: dict) -> None:
+def test_password_login_off_answers_members_and_strangers_alike(
+    client: TestClient, operator: dict, provider: FakeProvider
+) -> None:
     invite_member(client, "alex")
+    add_provider(client, provider)
     assert client.put("/api/settings", json={"password_login": False}, headers=UI).status_code == 200
     stranger = TestClient(app, base_url="http://testserver")
     unknown = stranger.post("/api/auth/login", json={"name": "nobody", "password": "whatever-it-is"}, headers=UI)
@@ -333,42 +335,6 @@ def test_the_second_factor_fails_closed_when_the_seed_is_unreadable(
     refused = code_step(client, fresh_code(secret, clock))
     assert refused.status_code == 401 and refused.json()["detail"]["code"] == "second_factor_unavailable"
     assert client.get("/api/auth/me").status_code == 401
-
-
-# --- OIDC identities ------------------------------------------------------------------------------------------------ #
-
-
-def test_an_empty_subject_never_matches_an_account(client: TestClient, operator: dict) -> None:
-    identity = Identity(issuer="https://sso.example.com", subject="  ", email="admin@example.com", email_verified=True, username="admin")
-    with SessionLocal() as db:
-        assert oidc_router._resolve(db, identity, True) == "oidc_token_invalid"
-
-
-def test_unlinking_forgets_the_address_too(client: TestClient, operator: dict) -> None:
-    with SessionLocal() as db:
-        row = db.get(Account, operator["id"])
-        row.oidc_subject, row.email = "person-1", "admin@example.com"
-        db.commit()
-    assert client.delete("/api/oidc/link", headers=UI).status_code == 204
-    me = client.get("/api/auth/me").json()
-    assert me["oidc_linked"] is False and me["email"] == ""
-
-
-def test_a_changed_issuer_drops_every_link(client: TestClient, operator: dict) -> None:
-    invite_member(client, "alex")
-    with SessionLocal() as db:
-        for row in db.query(Account).all():
-            row.oidc_subject = f"person-{row.id}"
-        db.commit()
-        oidc_router.forget_subjects(db, "https://old.example.com", "https://new.example.com")
-        assert all(row.oidc_subject == "" for row in db.query(Account).all())
-
-
-def test_linking_needs_the_password_and_a_configured_provider(client: TestClient, operator: dict) -> None:
-    wrong = client.post("/api/oidc/link/start", json={"password": "not-it-at-all"}, headers=UI)
-    assert wrong.status_code == 401 and wrong.json()["detail"]["code"] == "wrong_password"
-    unset = client.post("/api/oidc/link/start", json={"password": PASSWORD}, headers=UI)
-    assert unset.status_code == 409 and unset.json()["detail"]["code"] == "oidc_not_configured"
 
 
 # --- Small things with sharp edges ------------------------------------------------------------------------------- #

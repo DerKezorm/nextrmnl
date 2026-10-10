@@ -43,14 +43,16 @@ DEFAULTS: dict[str, Any] = {
     "two_factor_required": False,
     "log_mode": "normal",
     "log_mode_until": None,
-    #: OIDC: issuer, client_id and the encrypted client secret; empty means not set up.
+    #: The one OIDC provider of nextrmnl 0.4 and before. The providers live in ``oidc_providers`` now; these stay for
+    #: one version as the way back and always describe the entry ``oidc`` or are empty
+    #: (``services/oidc_store.mirror_legacy``). Never shown, never changed through PUT /api/settings.
     "oidc_issuer": "",
     "oidc_client_id": "",
     "oidc_client_secret_enc": "",
     "oidc_provider_name": "",
-    #: Whether an unknown identity from the provider gets a member account. Off: only accounts that exist
-    #: (invited, or linked by their owner) may come in through OIDC. The operator decides here, not only there.
     "oidc_auto_create": False,
+    #: Set once the old settings were looked at (``oidc_store.migrate_settings``).
+    "oidc_list_migrated": False,
     #: The address people use to reach nextrmnl: invitation links, the OIDC redirect, the WebSocket origin
     #: check. Empty means ``NEXTRMNL_PUBLIC_URL`` from the environment, and without that the request's own.
     "public_url": "",
@@ -74,7 +76,6 @@ PUBLIC_KEYS = (
     "backup_keep",
     "password_login",
     "two_factor_required",
-    "oidc_auto_create",
 )
 
 

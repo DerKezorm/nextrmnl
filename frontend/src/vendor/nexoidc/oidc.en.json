@@ -1,0 +1,112 @@
+{
+  "oidc": {
+    "login": {
+      "button": "Sign in with {{name}}",
+      "or": "or",
+      "operator": "Sign in as the operator with a password"
+    },
+    "invite": {
+      "button": "Continue with {{name}}"
+    },
+    "admin": {
+      "signInTitle": "Sign-in",
+      "password": "Sign-in with a password",
+      "passwordHint": "Off: only the providers let people in. You as the operator can always use your password.",
+      "address": "Public address",
+      "addressHint": "The address people use to reach {{app}}. Invitations, providers and links in mails use it.",
+      "providersTitle": "Sign-in providers",
+      "providersText": "Any provider that speaks OpenID Connect: authentik, Microsoft Entra ID, Keycloak, Authelia, Pocket ID. Each gets a button on the sign-in page.",
+      "empty": "No provider yet. Set up authentik below in one step or add a provider by hand.",
+      "add": "Add a provider",
+      "edit": "Edit",
+      "remove": "Remove",
+      "removeConfirm": "Remove “{{name}}”? {{count}} accounts lose the link, {{only}} of them sign in only through it.",
+      "active": "on",
+      "inactive": "off",
+      "managed": "set up through authentik",
+      "label": "Name on the button",
+      "slug": "Short name",
+      "slugHint": "Part of the redirect address; it cannot be changed later.",
+      "issuer": "Issuer",
+      "issuerHint": "authentik: https://auth.example.com/application/o/{{app}}/. Microsoft Entra ID: https://login.microsoftonline.com/TENANT-ID/v2.0, or common or organizations for several tenants. Entra takes only https redirect addresses (localhost aside) and sends the email address only as the optional claim email.",
+      "clientId": "Client ID",
+      "secret": "Client secret",
+      "secretKept": "stored, leave empty to keep it",
+      "redirect": "Redirect address for the provider",
+      "enabled": "On",
+      "autoCreate": "New people get an account",
+      "autoCreateHint": "Off: only invited people and linked accounts come in through this provider. On: whoever has an account there gets one here as a member.",
+      "trustsSecondFactor": "The provider checks the second factor itself",
+      "trustsSecondFactorHint": "Off: whoever has a second factor here is asked for the code after signing in through the provider.",
+      "scopes": "Scopes",
+      "issuerChangeConfirm": "Another issuer is another provider. {{count}} accounts will have to link again afterwards."
+    },
+    "authentik": {
+      "title": "authentik in one step",
+      "text": "With an API token that may create applications, {{app}} sets up provider and application in authentik itself. The token is used for that only and never stored.",
+      "url": "Address of authentik",
+      "token": "API token",
+      "run": "Set up",
+      "blueprint": "Download blueprint instead",
+      "asking": "One moment, authentik is being asked. This can take up to 20 seconds.",
+      "noAddress": "Enter the public address first: authentik sends people back there.",
+      "step": {
+        "reached": "Connection to authentik",
+        "signingKey": "Signing key",
+        "mapping": "Mappings for name and address",
+        "provider": "Provider",
+        "application": "Application",
+        "filled": "Settings here",
+        "binding": "Only your account"
+      },
+      "why": {
+        "unreachable": "authentik cannot be reached at this address. Check the address and whether {{app}} reaches that network.",
+        "unusable": "This address cannot be used. Check how it is written.",
+        "token": "authentik did not accept the token (answer {{status}}). Check that it is valid and has the rights it needs.",
+        "malformed": "The token contains characters no token has. Copy it from authentik once more.",
+        "answered": "Something answers at this address, but not authentik as expected (answer {{status}}). Check the address; the whole answer is in the log.",
+        "slug": "Every slug {{app}} would give its application already belongs to another application in authentik. Rename the {{app}} provider there and try again.",
+        "coupled": "While {{app}} is coupled, sign-in comes through the coupling. Uncouple first, then set up authentik here.",
+        "issuer_change": "This is another authentik than before, so another issuer. {{count}} accounts will have to link again afterwards."
+      }
+    },
+    "account": {
+      "title": "Sign-in providers",
+      "text": "Link your account to a provider, then you can sign in there too. Your password confirms it is you.",
+      "linked": "Linked",
+      "notLinked": "Not linked",
+      "link": "Link",
+      "unlink": "Unlink",
+      "only": "This account signs in through {{name}} only."
+    },
+    "error": {
+      "oidc_not_configured": "This provider is not set up.",
+      "oidc_provider_unreachable": "The provider cannot be reached right now.",
+      "oidc_provider_invalid": "The provider's answer cannot be understood.",
+      "oidc_issuer_mismatch": "The provider calls itself something other than what was entered.",
+      "oidc_state_mismatch": "The sign-in ran out or came from elsewhere. Try again.",
+      "oidc_provider_error": "The provider stopped the sign-in.",
+      "oidc_token_refused": "The provider did not redeem the code.",
+      "oidc_token_invalid": "The provider's answer was not valid.",
+      "oidc_no_signing_key": "The provider signs without a key. Choose a signing key for the provider there.",
+      "oidc_no_account": "There is no account for you here. Ask for an invitation, or sign in with your password and link your account under My account, Security.",
+      "oidc_subject_taken": "This identity is linked to another account already.",
+      "oidc_only_account": "This account signs in through this provider only. The last link stays.",
+      "oidc_link_mismatch": "This link belongs to another account.",
+      "invite_invalid": "The invitation ran out or has been used.",
+      "account_blocked": "This account is blocked. Ask the operator.",
+      "too_many_attempts": "Too many attempts. Wait a moment, then try again."
+    },
+    "formError": {
+      "slug_invalid": "The short name takes a to z, digits and dashes, up to 40 characters.",
+      "slug_taken": "Another entry has this short name already.",
+      "label_required": "Enter a name for the button.",
+      "issuer_invalid": "The issuer must start with http:// or https://.",
+      "client_id_required": "Enter the client ID.",
+      "client_secret_invalid": "The client secret is too long.",
+      "scopes_invalid": "The scopes must contain openid.",
+      "provider_managed": "This provider comes through a coupling and changes only there.",
+      "provider_unknown": "This provider no longer exists."
+    }
+  }
+}

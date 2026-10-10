@@ -24,8 +24,9 @@ from ..deps import (
 from ..meldungen import fehler, meldung
 from ..models import ROLES, SIGN_IN_PASSWORD, Account
 from ..security import MIN_PASSWORD, SESSION_COOKIE, brake, end_all_sessions, end_session, start_session
-from ..services import accounts, passkeys, settings_service, totp, vault
+from ..services import accounts, oidc_store, passkeys, settings_service, totp, vault
 from ..services.accounts import AccountError
+from ..vendor.nexoidc import providers
 
 logger = logging.getLogger("nextrmnl.auth")
 
@@ -129,7 +130,10 @@ def account_view(db: DbSession, account: Account) -> dict[str, Any]:
         if totp.has_second_factor(db, account)
         else 0,
         "second_factor_setup_required": totp.setup_required(db, account),
-        "oidc_linked": bool(account.oidc_subject),
+        #: How many providers the account is linked to; which ones the account page asks ``/api/oidc/me``.
+        "oidc_links": oidc_store.link_count(db, account.id),
+        #: Providers the operator unlinked it from, until the account says it saw it.
+        "oidc_unlinked": oidc_store.unlinked_notices(account),
         "vault": "unset" if not account.vault_ready else ("open" if vault.is_open(account.id) else "locked"),
         "prefs": account.prefs or {},
         "created_at": account.created_at.isoformat(),
@@ -238,6 +242,30 @@ def logout_everywhere(request: Request, account: CurrentAccount, db: DbSession) 
     logger.info("All other sessions ended by their owner account=%s", account.name)
 
 
+@router.get("/auth/methods", summary="How one signs in here: password, and which providers (no sign-in needed)")
+def sign_in_methods(db: DbSession) -> dict[str, Any]:
+    # Public: the sign-in page asks before anybody is signed in. Only the buttons and whether the form is there.
+    listed = providers.public_list(oidc_store.SqlStore(db))
+    return {"password": bool(settings_service.get(db, "password_login")), "providers": listed}
+
+
+@router.get("/auth/login/pending", summary="The second step waiting in this browser, if any")
+def pending_sign_in(request: Request, db: DbSession) -> dict[str, Any]:
+    """After a provider that is not trusted with the second factor the browser lands on ``/login?step=code``; the
+    page asks here what the step offers. Only this browser's own waiting sign-in, by its cookie."""
+    waiting = totp.get_pending(request.cookies.get(PENDING_COOKIE))
+    account = db.get(Account, waiting.account_id) if waiting is not None else None
+    if account is None:
+        raise fehler("second_factor_expired", "Start again with your password.", 401)
+    return {"name": account.name, "methods": totp.methods(db, account)}
+
+
+@router.delete("/auth/oidc-notice", status_code=204, summary="The account saw that the operator unlinked it")
+def seen_unlinked(account: CurrentAccount, db: DbSession) -> None:
+    account.oidc_unlinked = ""
+    db.commit()
+
+
 @router.get("/auth/me", summary="The signed-in account")
 def me(account: CurrentAccount, db: DbSession) -> dict[str, Any]:
     return account_view(db, account)
@@ -281,7 +309,11 @@ def save_prefs(payload: PrefsIn, account: CurrentAccount, db: DbSession) -> dict
 def list_accounts(operator: OperatorAccount, db: DbSession) -> list[dict[str, Any]]:
     from sqlalchemy import select
 
-    return [account_view(db, row) for row in db.scalars(select(Account).order_by(Account.created_at))]
+    linked = oidc_store.linked_providers(db)
+    return [
+        {**account_view(db, row), "providers": linked.get(row.id, [])}
+        for row in db.scalars(select(Account).order_by(Account.created_at))
+    ]
 
 
 @router.get("/accounts/names", summary="Names of all accounts, for sharing a connection")

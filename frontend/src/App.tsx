@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next'
-import { Navigate, Route, Routes } from 'react-router-dom'
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 
 import { useAuth } from './auth'
 import { AppShell } from './components/AppShell'
@@ -28,6 +28,17 @@ function Unreachable() {
   )
 }
 
+/**
+ * `/account` is where the shared sign-in module sends the browser back after linking (`?linked=<slug>` or
+ * `?error=<code>`): the account tab of the settings, with what came along.
+ */
+function AccountRedirect() {
+  const { search } = useLocation()
+  const params = new URLSearchParams(search)
+  params.set('tab', 'account')
+  return <Navigate to={`/settings?${params.toString()}`} replace />
+}
+
 /** Before sign-in there are only three pages; after that, the shell with everything. */
 export default function App() {
   const { state, account } = useAuth()
@@ -52,6 +63,7 @@ export default function App() {
         <Routes>
           <Route element={<AppShell />}>
             <Route path="settings" element={<SettingsPage />} />
+            <Route path="account" element={<AccountRedirect />} />
             <Route path="*" element={<Navigate to="/settings?tab=account" replace />} />
           </Route>
         </Routes>
@@ -67,6 +79,7 @@ export default function App() {
           <Route path="sessions" element={<SessionsPage />} />
           <Route path="vault" element={<VaultPage />} />
           <Route path="settings" element={<SettingsPage />} />
+          <Route path="account" element={<AccountRedirect />} />
           <Route path="about" element={<AboutPage />} />
           <Route path="connect/:id" element={<ConnectPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />

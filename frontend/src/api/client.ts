@@ -7,6 +7,7 @@
  */
 
 import i18n from '../i18n'
+import { oidcErrorKey, oidcFormErrorKey } from '../vendor/nexoidc/oidc'
 
 let onSignedOut: (() => void) | null = null
 
@@ -40,14 +41,24 @@ export function translateError(detail: Record<string, unknown>, status: number):
       ? i18n.t('errors.tooManyAttemptsMinutes', { count: Math.ceil(seconds / 60) })
       : i18n.t('errors.tooManyAttemptsSeconds', { count: seconds })
   }
-  const key = `errors.byCode.${code}`
-  return i18n.exists(key) ? i18n.t(key, { ...detail }) : fallback
+  const key = codeKey(code)
+  return key ? i18n.t(key, { ...detail }) : fallback
+}
+
+/**
+ * The text key of a code: nextrmnl's own sentence, else the shared sign-in module's (`oidc.error.…`, its form
+ * problems `oidc.formError.…`). Null for a code nobody has a sentence for.
+ */
+function codeKey(code: string): string | null {
+  const own = `errors.byCode.${code}`
+  if (i18n.exists(own)) return own
+  return oidcErrorKey(code) ?? oidcFormErrorKey(code)
 }
 
 export function errorText(code: string | null | undefined): string {
   if (!code) return ''
-  const key = `errors.byCode.${code}`
-  return i18n.exists(key) ? i18n.t(key) : code
+  const key = codeKey(code)
+  return key ? i18n.t(key) : code
 }
 
 async function parseError(response: Response): Promise<ApiError> {
@@ -93,7 +104,7 @@ export const api = {
   get: <T>(path: string) => send<T>('GET', path),
   post: <T>(path: string, body?: unknown) => send<T>('POST', path, body),
   put: <T>(path: string, body?: unknown) => send<T>('PUT', path, body),
-  delete: <T>(path: string) => send<T>('DELETE', path),
+  delete: <T>(path: string, body?: unknown) => send<T>('DELETE', path, body),
 }
 
 /** Downloads a file via POST (password in the body) and hands it to the browser to save. */

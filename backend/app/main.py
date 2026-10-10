@@ -26,7 +26,8 @@ from .routers import settings as settings_router
 from .routers import totp as totp_router
 from .routers import vault as vault_router
 from .security import purge_sessions
-from .services import logs, settings_service, totp, vault
+from .services import logs, oidc_store, settings_service, totp, vault
+from .vendor import nexoidc
 
 logger = logging.getLogger("nextrmnl")
 
@@ -112,6 +113,14 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         except Exception:
             logger.exception("Applying the pending restore failed")
     init_db()
+    # The single sign-in provider of the settings (0.4 and before) becomes the entry "oidc" of the list, once,
+    # with a backup first.
+    try:
+        oidc_store.migrate_settings()
+    except Exception:
+        logger.exception("Moving the sign-in provider to the list failed; it is tried again at the next start")
+    # The TLS context of the sign-in module is read once, in a thread, so that the first sign-in does not wait for it.
+    await nexoidc.warm()
     # The server secret is created now, not on first use: a backup taken before the first OIDC setup would
     # otherwise carry KEY-MISSING.txt and a later restore would encrypt with a key that did not exist yet.
     get_settings().resolved_secret_key()
@@ -173,6 +182,9 @@ app.add_exception_handler(Exception, unhandled_error)
 
 for module in ROUTERS:
     app.include_router(module.router)
+
+# The shared sign-in module learns who it runs in before the first request (vendor/nexoidc).
+oidc_store.configure()
 
 
 def _mount_frontend(target: FastAPI, dist: Path) -> None:

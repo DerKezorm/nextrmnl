@@ -1,0 +1,484 @@
+"""nextrmnl's side of the shared sign-in module ``vendor/nexoidc``: the ``Store`` over its tables, the start-up
+configuration, and the migration from the single provider of the settings to the list.
+
+The module (the shared blueprint "Anmeldung mit OIDC und authentik", the same in every nex app) runs the protocol,
+decides who an identity is and keeps the provider list; it never sees a database. What is nextrmnl's own lives here:
+accounts and their names, guest accounts that ran out, the role and end an invitation brings, the address an account
+through a provider follows, and the encryption of the client secrets with ``secret.key``.
+
+The vault is never touched here. An account that signs in through a provider has no password, so its vault stays
+locked until the person chooses a vault password (``vault_ready`` false for a new one).
+
+A ``SqlStore`` works inside one SQLAlchemy session, one request. The module commits when an outcome is settled and
+rolls back when it refuses after a write (a consumed invitation comes back that way).
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import re
+
+from sqlalchemy import delete, func, select, update
+from sqlalchemy.orm import Session
+
+from .. import crypto
+from ..config import get_settings
+from ..db import SessionLocal
+from ..models import MEMBER, OPERATOR, SIGN_IN_OIDC, SIGN_IN_PASSWORD, Account, OidcLink, OidcProvider, Setting, utcnow
+from ..models import Invite as InviteRow
+from ..vendor import nexoidc
+from ..vendor.nexoidc import (
+    AccountState,
+    Invite,
+    Link,
+    Provider,
+    ProviderValues,
+    migrate,
+    protocol,
+    secret_context,
+)
+from . import accounts, settings_service
+
+logger = logging.getLogger("nextrmnl.oidc")
+
+APP_NAME = "nextrmnl"
+#: Where the module sends the browser: the sign-in page, the account page (a route of the frontend that opens the
+#: account tab of the settings), the start page.
+LOGIN_PAGE = "/login"
+ACCOUNT_PAGE = "/account"
+HOME = "/"
+#: Longest account name (``accounts.NAME_PATTERN``).
+NAME_MAX = 64
+_NUMBERED = re.compile(r"^(.*?)(-\d+)$")
+
+
+def _public_url() -> str:
+    with SessionLocal() as db:
+        return settings_service.public_url(db)
+
+
+def _server_secret() -> str:
+    return get_settings().resolved_secret_key()
+
+
+def configure() -> None:
+    """Tell the module who it runs in; called once at start-up (and by the tests)."""
+    nexoidc.configure(
+        nexoidc.AppConfig(
+            app_name=APP_NAME,
+            server_secret=_server_secret,
+            public_url=_public_url,
+            login_page=LOGIN_PAGE,
+            account_page=ACCOUNT_PAGE,
+            home=HOME,
+        )
+    )
+
+
+def clean_name(raw: str) -> str:
+    """An account name from what the provider suggests: lower case, nextrmnl's characters, at most 64; a number at
+    the end (``max-2``) survives the cut. Empty when nothing usable is left."""
+    cleaned = re.sub(r"[^a-z0-9._-]", "-", raw.strip().lower()).strip("-._")
+    if len(cleaned) > NAME_MAX:
+        numbered = _NUMBERED.match(cleaned)
+        suffix = numbered.group(2) if numbered else ""
+        stem = numbered.group(1) if numbered else cleaned
+        cleaned = stem[: NAME_MAX - len(suffix)].rstrip("-._") + suffix
+    return cleaned if accounts.NAME_PATTERN.match(cleaned) else ""
+
+
+def has_links(db: Session, account_id: int) -> bool:
+    return db.scalar(select(OidcLink.id).where(OidcLink.account_id == account_id).limit(1)) is not None
+
+
+def provider_only(account: Account) -> bool:
+    """The account signs in through providers only: it has no password here."""
+    return account.sign_in != SIGN_IN_PASSWORD or not account.password_hash
+
+
+def follow_address(db: Session, account: Account, email: str | None) -> None:
+    """The address a provider sends, as nextrmnl treats it. nextrmnl has no address of its own to change, so only an
+    account that signs in through providers alone follows it; an account with a password is not offered it (there is
+    nothing it would be offered for). Never an address another account has. Nothing is committed here."""
+    email = (email or "").strip()
+    if not email or len(email) > 255 or not provider_only(account) or email.lower() == (account.email or "").lower():
+        return
+    db.flush()
+    taken = db.scalar(select(Account.id).where(func.lower(Account.email) == email.lower(), Account.id != account.id))
+    if taken is not None:
+        logger.warning("Address from the provider not taken, another account has it name=%s", account.name)
+        return
+    account.email = email
+
+
+def forget_provider_address(db: Session, account_id: int) -> None:
+    """No provider left for the account: its address goes. Every address in nextrmnl came from a provider (there is
+    no other way to set one), and the version before took it away with the link as well."""
+    if has_links(db, account_id):
+        return
+    account = db.get(Account, account_id)
+    if account is not None and account.email:
+        account.email = ""
+        logger.info("Address from the provider went with the last link name=%s", account.name)
+
+
+class SqlStore:
+    """``nexoidc.Store`` over ``oidc_providers`` and ``oidc_links``, inside one session."""
+
+    def __init__(self, db: Session) -> None:
+        self.db = db
+
+    # --- Providers -------------------------------------------------------------------------------------------------
+
+    def _provider(self, row: OidcProvider | None) -> Provider | None:
+        if row is None:
+            return None
+        return Provider(
+            id=row.id,
+            slug=row.slug,
+            label=row.label,
+            issuer=row.issuer,
+            client_id=row.client_id,
+            client_secret=crypto.decrypt_secret(row.client_secret_enc, secret_context(row.id)),
+            scopes=row.scopes,
+            enabled=row.enabled,
+            auto_create=row.auto_create,
+            trusts_second_factor=row.trusts_second_factor,
+            managed=row.managed,
+            position=row.position,
+            redirect_path=row.redirect_path,
+            created_at=row.created_at,
+        )
+
+    def list_providers(self) -> list[Provider]:
+        rows = self.db.scalars(select(OidcProvider).order_by(OidcProvider.position, OidcProvider.id))
+        return [provider for provider in (self._provider(row) for row in rows) if provider is not None]
+
+    def get_provider(self, provider_id: int) -> Provider | None:
+        return self._provider(self.db.get(OidcProvider, provider_id))
+
+    def provider_by_slug(self, slug: str) -> Provider | None:
+        return self._provider(self.db.scalar(select(OidcProvider).where(OidcProvider.slug == slug)))
+
+    @staticmethod
+    def _apply(row: OidcProvider, values: ProviderValues) -> None:
+        row.slug, row.label, row.issuer, row.client_id = values.slug, values.label, values.issuer, values.client_id
+        row.scopes, row.enabled, row.auto_create = values.scopes, values.enabled, values.auto_create
+        row.trusts_second_factor, row.managed, row.position = (
+            values.trusts_second_factor,
+            values.managed,
+            values.position,
+        )
+        row.redirect_path = values.redirect_path
+
+    def insert_provider(self, values: ProviderValues) -> Provider:
+        row = OidcProvider()
+        self._apply(row, values)
+        self.db.add(row)
+        self.db.flush()
+        row.client_secret_enc = crypto.encrypt_secret(values.client_secret or "", secret_context(row.id))
+        self.db.flush()
+        provider = self._provider(row)
+        assert provider is not None
+        return provider
+
+    def update_provider(self, provider_id: int, values: ProviderValues) -> Provider:
+        row = self.db.get(OidcProvider, provider_id)
+        assert row is not None
+        self._apply(row, values)
+        if values.client_secret is not None:
+            row.client_secret_enc = crypto.encrypt_secret(values.client_secret, secret_context(row.id))
+        self.db.flush()
+        provider = self._provider(row)
+        assert provider is not None
+        return provider
+
+    def delete_provider(self, provider_id: int) -> None:
+        # Foreign keys are on (db.py), the links would go anyway; said here so that nothing depends on a pragma.
+        self.drop_links(provider_id)
+        self.db.execute(delete(OidcProvider).where(OidcProvider.id == provider_id))
+
+    # --- Links -----------------------------------------------------------------------------------------------------
+
+    @staticmethod
+    def _link(row: OidcLink) -> Link:
+        return Link(
+            row.provider_id, row.subject, row.account_id, row.issuer, row.email, row.created_at, row.last_used_at
+        )
+
+    def find_link(self, provider_id: int, subject: str) -> Link | None:
+        row = self.db.scalar(select(OidcLink).where(OidcLink.provider_id == provider_id, OidcLink.subject == subject))
+        return self._link(row) if row else None
+
+    def links_of_provider(self, provider_id: int) -> list[Link]:
+        rows = self.db.scalars(select(OidcLink).where(OidcLink.provider_id == provider_id).order_by(OidcLink.id))
+        return [self._link(row) for row in rows]
+
+    def links_of_account(self, account_id: int) -> list[Link]:
+        rows = self.db.scalars(select(OidcLink).where(OidcLink.account_id == account_id).order_by(OidcLink.id))
+        return [self._link(row) for row in rows]
+
+    def add_link(self, link: Link) -> None:
+        self.db.add(
+            OidcLink(
+                provider_id=link.provider_id,
+                subject=link.subject,
+                account_id=link.account_id,
+                issuer=link.issuer,
+                email=link.email,
+            )
+        )
+        self.db.flush()
+        self._address(link.account_id, link.email)
+
+    def remove_link(self, provider_id: int, account_id: int) -> bool:
+        result = self.db.execute(
+            delete(OidcLink).where(OidcLink.provider_id == provider_id, OidcLink.account_id == account_id)
+        )
+        removed = bool(result.rowcount)  # type: ignore[attr-defined]
+        if removed:
+            forget_provider_address(self.db, account_id)
+        return removed
+
+    def drop_links(self, provider_id: int) -> int:
+        holders = set(self.db.scalars(select(OidcLink.account_id).where(OidcLink.provider_id == provider_id)))
+        result = self.db.execute(delete(OidcLink).where(OidcLink.provider_id == provider_id))
+        for account_id in holders:
+            forget_provider_address(self.db, account_id)
+        return int(result.rowcount or 0)  # type: ignore[attr-defined]
+
+    def touch_link(self, provider_id: int, subject: str, email: str | None) -> None:
+        self.db.execute(
+            update(OidcLink)
+            .where(OidcLink.provider_id == provider_id, OidcLink.subject == subject)
+            .values(last_used_at=utcnow(), email=email)
+        )
+        account_id = self.db.scalar(
+            select(OidcLink.account_id).where(OidcLink.provider_id == provider_id, OidcLink.subject == subject)
+        )
+        if account_id is not None:
+            self._address(account_id, email)
+
+    def _address(self, account_id: int, email: str | None) -> None:
+        account = self.db.get(Account, account_id)
+        if account is not None:
+            follow_address(self.db, account, email)
+
+    # --- Accounts --------------------------------------------------------------------------------------------------
+
+    def account_state(self, account_id: int) -> AccountState | None:
+        row = self.db.get(Account, account_id)
+        if row is None:
+            return None
+        from . import totp
+
+        # A guest account that ran out is blocked, through a provider as with a password. The lock after wrong
+        # passwords is not: it keeps out guessing at the password, and a stranger could set it off from outside.
+        return AccountState(
+            id=row.id,
+            name=row.name,
+            blocked=row.expired,
+            has_password=row.sign_in == SIGN_IN_PASSWORD and bool(row.password_hash),
+            has_second_factor=totp.has_second_factor(self.db, row),
+        )
+
+    def clean_name(self, raw: str) -> str:
+        return clean_name(raw)
+
+    def name_taken(self, name: str) -> bool:
+        return accounts.by_name(self.db, name) is not None
+
+    def create_account(self, name: str, *, invite: Invite | None, email: str | None) -> int:
+        invited = invite.rights if invite is not None and isinstance(invite.rights, InviteRow) else None
+        role = invited.role if invited is not None else MEMBER
+        row = Account(name=name, role=role, sign_in=SIGN_IN_OIDC)
+        if invited is not None and role != OPERATOR:
+            # A guest invitation makes a guest account, whichever way the person comes in.
+            row.expires_at = invited.account_expires_at
+        self.db.add(row)
+        self.db.flush()
+        follow_address(self.db, row, email)
+        logger.info("Account created name=%s role=%s sign_in=oidc", row.name, role)
+        return row.id
+
+    # --- Invitations -----------------------------------------------------------------------------------------------
+
+    def find_invite(self, key: str) -> Invite | None:
+        row = accounts.find_invite(self.db, key)
+        return Invite(key=key, id=row.id, rights=row) if row is not None else None
+
+    def consume_invite(self, invite: Invite) -> bool:
+        return accounts.consume_invite(self.db, invite.id)
+
+    def accept_invite(self, account_id: int, invite: Invite) -> None:
+        """An account that is known already takes an invitation it came through: the higher role of the two, and no
+        end or the later one. Adds, never takes away."""
+        row = self.db.get(Account, account_id)
+        invited = invite.rights if isinstance(invite.rights, InviteRow) else None
+        if row is None or invited is None:
+            return
+        if invited.role == OPERATOR:
+            row.role, row.expires_at = OPERATOR, None
+        elif row.expires_at is not None:
+            later = invited.account_expires_at
+            row.expires_at = None if later is None else max(row.expires_at, later)
+        logger.info("Invitation accepted by a known account name=%s role=%s", row.name, row.role)
+
+    # --- Transaction -----------------------------------------------------------------------------------------------
+
+    def commit(self) -> None:
+        # Whatever the module settled, the way back to the version before the list sees the same.
+        mirror_legacy(self.db)
+        self.db.commit()
+
+    def rollback(self) -> None:
+        self.db.rollback()
+
+
+# --- What the routers and the account list need -----------------------------------------------------------------
+
+
+def linked_providers(db: Session) -> dict[int, list[dict[str, object]]]:
+    """Per account the providers it is linked to, for the marks in the operator's account list."""
+    rows = db.execute(
+        select(OidcLink.account_id, OidcProvider.id, OidcProvider.slug, OidcProvider.label)
+        .join(OidcProvider, OidcProvider.id == OidcLink.provider_id)
+        .order_by(OidcProvider.position, OidcProvider.id)
+    )
+    out: dict[int, list[dict[str, object]]] = {}
+    for account_id, provider_id, slug, label in rows:
+        out.setdefault(account_id, []).append({"id": provider_id, "slug": slug, "label": label})
+    return out
+
+
+def link_count(db: Session, account_id: int) -> int:
+    return int(db.scalar(select(func.count()).select_from(OidcLink).where(OidcLink.account_id == account_id)) or 0)
+
+
+def any_active(db: Session) -> bool:
+    return db.scalar(select(OidcProvider.id).where(OidcProvider.enabled.is_(True)).limit(1)) is not None
+
+
+def unlinked_notices(account: Account) -> list[str]:
+    try:
+        names = json.loads(account.oidc_unlinked or "[]")
+    except ValueError:
+        return []
+    return [str(name) for name in names if isinstance(name, str)][:20] if isinstance(names, list) else []
+
+
+def note_unlinked(account: Account, label: str) -> None:
+    """The operator took one of the account's links: the account sees it on its own page until it says it saw it."""
+    names = [name for name in unlinked_notices(account) if name != label]
+    account.oidc_unlinked = json.dumps([*names, label][-20:])
+
+
+# --- The migration from the single provider of the settings (blueprint 01 "Umstieg", 06 "Wanderung") --------------
+
+#: The settings of the single provider before the list. They stay readable for one version (the way back), then go.
+LEGACY_KEYS = ("oidc_issuer", "oidc_client_id", "oidc_client_secret_enc", "oidc_provider_name", "oidc_auto_create")
+#: Set once the settings were looked at: an operator who later removes every entry must not get the old provider
+#: back at the next start.
+MIGRATED = "oidc_list_migrated"
+
+
+def legacy_plan(db: Session) -> migrate.Plan | None:
+    """The entry ``oidc`` and its links the old settings become; None when no provider was set up."""
+    values = settings_service.get_all(db)
+    label = str(values.get("oidc_provider_name") or "")
+    legacy = migrate.Legacy(
+        issuer=str(values.get("oidc_issuer") or ""),
+        client_id=str(values.get("oidc_client_id") or ""),
+        client_secret=crypto.decrypt_secret(str(values.get("oidc_client_secret_enc") or "")),
+        label=label,
+        auto_create=bool(values.get("oidc_auto_create")),
+        # The authentik button of nextrmnl 0.1 to 0.4 named the provider "authentik"; the form never did by itself.
+        set_up_by_button=label == "authentik",
+    )
+    subjects = [
+        (account_id, subject)
+        for account_id, subject in db.execute(
+            select(Account.id, Account.oidc_subject).where(Account.oidc_subject != "").order_by(Account.id)
+        )
+    ]
+    # nextrmnl asked no code of its own after the provider before the list: the migrated entry keeps that (06).
+    return migrate.plan(legacy, subjects, trusts_second_factor=True)
+
+
+def mirror_legacy(db: Session) -> None:
+    """The way back to nextrmnl 0.4 (blueprint 01 "Umstieg" 4): that version reads the old settings ``oidc_*`` and the
+    column ``oidc_subject``, so they must always describe the entry ``oidc`` exactly, or be empty. Otherwise going
+    back would bring a removed provider back, or let a subject into an account that gave it up.
+
+    - The entry ``oidc`` gone or its issuer changed: the old settings and every old subject are emptied for good.
+    - Else the old settings follow the entry: its client (only while it is on; switched off, the old version finds no
+      client and lets nobody in through it), its name, ``auto_create`` only while on; each account's old subject is
+      its link there, and an account without one has none.
+
+    Nothing is committed here; the store calls it before every commit."""
+    issuer = str(settings_service.get(db, "oidc_issuer") or "")
+    entry = db.scalar(select(OidcProvider).where(OidcProvider.slug == nexoidc.LEGACY_SLUG)) if issuer else None
+    if issuer and (entry is None or not protocol.same_issuer(entry.issuer, issuer)):
+        put_settings(db, {key: settings_service.DEFAULTS[key] for key in LEGACY_KEYS})
+        logger.info("The provider before the list is gone or another: its old settings and subjects are emptied")
+        entry = None
+    db.flush()
+    if entry is None:
+        db.execute(update(Account).where(Account.oidc_subject != "").values(oidc_subject=""))
+        return
+    rows = db.execute(select(OidcLink.account_id, OidcLink.subject).where(OidcLink.provider_id == entry.id))
+    linked = {account_id: subject for account_id, subject in rows}
+    for account in db.scalars(select(Account).where((Account.oidc_subject != "") | Account.id.in_(linked))):
+        wanted = linked.get(account.id, "")
+        if account.oidc_subject != wanted:
+            account.oidc_subject = wanted
+    client_id = entry.client_id if entry.enabled else ""
+    secret = crypto.decrypt_secret(entry.client_secret_enc, secret_context(entry.id)) if entry.enabled else ""
+    old_secret = crypto.decrypt_secret(str(settings_service.get(db, "oidc_client_secret_enc") or ""))
+    if str(settings_service.get(db, "oidc_client_id") or "") != client_id or old_secret != secret:
+        sealed = crypto.encrypt_secret(secret) if secret else ""
+        put_settings(db, {"oidc_client_id": client_id, "oidc_client_secret_enc": sealed})
+    shown = {"oidc_provider_name": entry.label, "oidc_auto_create": bool(entry.auto_create and entry.enabled)}
+    changed = {key: value for key, value in shown.items() if settings_service.get(db, key) != value}
+    if changed:
+        put_settings(db, changed)
+
+
+def put_settings(db: Session, changes: dict[str, object]) -> None:
+    """Settings written in the open transaction (``settings_service.save`` commits on its own)."""
+    for key, value in changes.items():
+        row = db.get(Setting, key)
+        if row is None:
+            db.add(Setting(key=key, value=value))
+        else:
+            row.value = value
+
+
+def migration_due(db: Session) -> bool:
+    return (
+        not settings_service.get(db, MIGRATED)
+        and db.scalar(select(func.count()).select_from(OidcProvider)) == 0
+        and legacy_plan(db) is not None
+    )
+
+
+def migrate_settings(*, backup: bool = True) -> Provider | None:
+    """Once, at the first start with the list: the provider of the settings becomes the entry ``oidc`` with a link
+    per stored subject; ``/api/oidc/callback`` keeps signing in. A backup goes first (the way back). Nothing happens
+    when there was no provider or the list has entries already."""
+    with SessionLocal() as db:
+        if not migration_due(db):
+            if not settings_service.get(db, MIGRATED):
+                settings_service.save(db, {MIGRATED: True})
+            return None
+    if backup:
+        from . import backups
+
+        backups.create(kind=backups.UPDATE, note="before the sign-in provider list")
+    with SessionLocal() as db:
+        if not migration_due(db):
+            return None
+        entry = migrate.apply(SqlStore(db), legacy_plan(db))
+        settings_service.save(db, {MIGRATED: True})
+        return entry

@@ -17,7 +17,7 @@ from app.models import Account
 from app.services import ssh
 from tests.conftest import PASSWORD, UI, invite_member
 from tests.helpers_sshd import Sshd, connect_ws, open_session, receive, receive_json, receive_until, running_sshd
-from tests.test_oidc import FakeProvider, configure, fresh_browser, provider, sign_in_via_oidc  # noqa: F401
+from tests.oidc_helpers import FakeProvider, add_provider, error_in, fresh_browser, location, sign_in_via_oidc
 from tests.test_ssh import make_connection, store_password
 
 
@@ -122,15 +122,15 @@ def test_only_the_operator_sets_ends(client: TestClient, operator: dict) -> None
 
 
 def test_an_expired_account_cannot_come_in_through_the_provider(
-    client: TestClient, operator: dict, provider: FakeProvider  # noqa: F811
+    client: TestClient, operator: dict, provider: FakeProvider
 ) -> None:
-    configure(client)
+    add_provider(client, provider, auto_create=True)
     first = sign_in_via_oidc(fresh_browser(client), provider)
-    assert first.headers["location"] == "/"
+    assert location(first) == "/"
     client.put(f"/api/accounts/{account_id('alex')}/expiry", json={"expires_at": earlier()}, headers=UI)
     again = fresh_browser(client)
     refused = sign_in_via_oidc(again, provider)
-    assert refused.status_code == 303 and "account_expired" in refused.headers["location"]
+    assert error_in(refused) == "account_blocked"
     assert not again.cookies.get("nextrmnl_session")
 
 

@@ -8,10 +8,10 @@ import secrets
 from datetime import datetime, timedelta
 from functools import lru_cache
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
-from ..models import MEMBER, OPERATOR, ROLES, SIGN_IN_OIDC, SIGN_IN_PASSWORD, Account, Invite, utcnow
+from ..models import MEMBER, OPERATOR, ROLES, SIGN_IN_PASSWORD, Account, Invite, utcnow
 from ..security import LOCK_MINUTES, MAX_FAILURES, hash_password, hash_token, verify_password
 from . import vault
 
@@ -61,20 +61,6 @@ def create_operator(db: Session, name: str, password: str) -> Account:
     if count(db) > 0:
         raise AccountError("already_set_up", "nextrmnl is already set up.", 409)
     return create_with_password(db, name, password, OPERATOR)
-
-
-def create_oidc(db: Session, name: str, subject: str, email: str) -> Account:
-    base = re.sub(r"[^a-z0-9._-]", "-", name.strip().lower()) or "user"
-    candidate = base[:60]
-    suffix = 1
-    while by_name(db, candidate) is not None:
-        suffix += 1
-        candidate = f"{base[:58]}-{suffix}"
-    account = Account(name=candidate, role=MEMBER, sign_in=SIGN_IN_OIDC, oidc_subject=subject, email=email)
-    db.add(account)
-    db.commit()
-    logger.info("Account created name=%s role=%s sign_in=oidc", account.name, MEMBER)
-    return account
 
 
 @lru_cache(maxsize=1)
@@ -186,19 +172,35 @@ def create_invite(
 
 
 def find_invite(db: Session, token: str) -> Invite | None:
+    """An open invitation: not run out, and its inviter still the operator (an invitation of somebody who lost the
+    role invites nobody any more)."""
     invite = db.scalar(select(Invite).where(Invite.token_hash == hash_token(token)))
     if invite is None or invite.expires_at <= utcnow():
         return None
+    inviter = db.get(Account, invite.created_by)
+    if inviter is None or inviter.role != OPERATOR:
+        return None
     return invite
+
+
+def consume_invite(db: Session, invite_id: int) -> bool:
+    """Use an invitation up with one statement that must hit exactly one row: of two people redeeming the same link
+    at the same moment, only one gets an account. Nothing is committed here."""
+    result = db.execute(delete(Invite).where(Invite.id == invite_id, Invite.expires_at > utcnow()))
+    return result.rowcount == 1  # type: ignore[attr-defined]
 
 
 def accept_invite(db: Session, token: str, name: str, password: str) -> Account:
     invite = find_invite(db, token)
     if invite is None:
         raise AccountError("invite_invalid", "This invitation is not valid any more.", 404)
-    account = create_with_password(db, name, password, invite.role)
-    account.expires_at = invite.account_expires_at
-    db.delete(invite)
+    role, ends = invite.role, invite.account_expires_at
+    # Used up first, in the same transaction as the account: a second redeemer of the same link gets nothing.
+    if not consume_invite(db, invite.id):
+        db.rollback()
+        raise AccountError("invite_invalid", "This invitation is not valid any more.", 404)
+    account = create_with_password(db, name, password, role)
+    account.expires_at = ends
     db.commit()
     logger.info("Invite accepted name=%s", account.name)
     return account

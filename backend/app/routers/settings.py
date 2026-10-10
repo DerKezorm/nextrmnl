@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from .. import crypto
 from ..deps import DbSession, OperatorAccount
 from ..meldungen import fehler
-from ..services import notify, settings_service, targets, updates
+from ..services import notify, oidc_store, settings_service, targets, updates
 from ..services.settings_service import TARGETS_MODES
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
@@ -30,7 +30,6 @@ class SettingsIn(BaseModel):
     backup_keep: int | None = Field(default=None, ge=2, le=50)
     password_login: bool | None = None
     two_factor_required: bool | None = None
-    oidc_auto_create: bool | None = None
     public_url: str | None = Field(default=None, max_length=500)
     notify_enabled: bool | None = None
     notify_kind: str | None = None
@@ -82,6 +81,9 @@ def write(payload: SettingsIn, operator: OperatorAccount, db: DbSession) -> dict
         url = values.get("notify_url", settings_service.get(db, "notify_url"))
         if not url:
             raise fehler("notify_url_missing", "Enter the address of the inbox first.", 422)
+    if values.get("password_login") is False and not oidc_store.any_active(db):
+        # Without an active provider nobody but the operator could come in any more (shared blueprint 01).
+        raise fehler("provider_first", "Set up a sign-in provider before turning sign-in with a password off.", 409)
     if values.get("update_check") is False:
         updates.forget()
     settings_service.save(db, values)

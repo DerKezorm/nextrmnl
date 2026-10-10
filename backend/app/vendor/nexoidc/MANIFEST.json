@@ -1,0 +1,37 @@
+{
+  "files": {
+    "backend/app/vendor/nexoidc/__init__.py": "sha256-Bwh8vVVnLmBE+QJutCEj3qlS9ScN2zxARAltZGFjIQg=",
+    "backend/app/vendor/nexoidc/accounts.py": "sha256-virx5LdFS+btMc3//pobhGI9MzeNMIfa6T/0q15Cotg=",
+    "backend/app/vendor/nexoidc/attempt.py": "sha256-+6/Q1D/bqkSv/bsbMS3r4nrV41cre04CSyerq6iynaA=",
+    "backend/app/vendor/nexoidc/authentik.py": "sha256-/5UfnzgIB+1Km22qutc/07nyvBJcupnVGjG/Aq1fTHo=",
+    "backend/app/vendor/nexoidc/config.py": "sha256-m1Ty43eJrTnrp6l7MGrB94MoXLwtXJh9YioK+LyV0SY=",
+    "backend/app/vendor/nexoidc/coupling.py": "sha256-rps2tDJahGdcCrh42h0fK/JonwaAWl9kNz/09rURlhU=",
+    "backend/app/vendor/nexoidc/errors.py": "sha256-FJkm7kniZ90gBRPtvZiaWwG7D28vhXpxcGL2G9aPHwQ=",
+    "backend/app/vendor/nexoidc/flow.py": "sha256-OgGniHhnSDfaMd4gbOjP7eQgtVWytbD9RFS51nEojY0=",
+    "backend/app/vendor/nexoidc/migrate.py": "sha256-csr1voglDGmylfAEsP3h+aPWZ1fu+ohb2ZK+PSpT8uI=",
+    "backend/app/vendor/nexoidc/model.py": "sha256-8wRw8oAtXmDZZaapSsdFbiR4wPRNqlIweVYRWCrF96Q=",
+    "backend/app/vendor/nexoidc/protocol.py": "sha256-ru3F0jSim8HzkX6BatdHP/QrD99o2o0JrwMYY1VIxy8=",
+    "backend/app/vendor/nexoidc/providers.py": "sha256-0YexfCU5qllWihaFsQrd1IAULk6ij3cJupjBqLOmQhg=",
+    "backend/app/vendor/nexoidc/tls.py": "sha256-Qb+c/KKuAA5/bhfRnoB0I6cY8PEchLtC5px4Nh4aGa8=",
+    "backend/tests/nexoidc/conftest.py": "sha256-mIgfLrl12RYsWgewrqBIXRct1l0TQwByLm3wINTOA/o=",
+    "backend/tests/nexoidc/oidc_contract.py": "sha256-awjTQnBSr/DFGHSdtxrMPCY0jhODVCPI66fdVS9G720=",
+    "backend/tests/nexoidc/oidc_fakes.py": "sha256-lbo7g/eZzWuWHSqAafTLY8P7JxPzCecEWjNFkzBy59U=",
+    "backend/tests/nexoidc/test_nexoidc_accounts.py": "sha256-SMEAmdzCjNtoJJgaFcMEkS7gbbIjPJFuP5oBgMlzCt0=",
+    "backend/tests/nexoidc/test_nexoidc_authentik.py": "sha256-WB8DKs4sksxR3OefqdRDoCcbWsvzhSGY+A+gM76+pB0=",
+    "backend/tests/nexoidc/test_nexoidc_duties.py": "sha256-JZ3v/skBb8ZHI1kbp2ER8gRu975WhIOoAcMxhvMrFx8=",
+    "backend/tests/nexoidc/test_nexoidc_entra.py": "sha256-Raa/JmWZOlXy3026PUD2PbSaGHV0vPBKasQwi3i2hO4=",
+    "backend/tests/nexoidc/test_nexoidc_flow.py": "sha256-nbtkj585+roXrwIUPkOJiY/HLjQIC9IrwP/5OVwqW2Y=",
+    "backend/tests/nexoidc/test_nexoidc_paths.py": "sha256-sOeTVR+W13mgHBPwQC5wz+I8NqZkf2fePfBjWHeT95c=",
+    "backend/tests/nexoidc/test_nexoidc_vendored.py": "sha256-+EzsD5r5VxwtmcLN9H3PSPBKB76WCNlkfs85wvoLLEw=",
+    "frontend/src/vendor/nexoidc/oidc.de.json": "sha256-ppWfzr9tDIUbSZJOtZ9EpxCZzzO1Lt7sTKZrxNdi4Pw=",
+    "frontend/src/vendor/nexoidc/oidc.en.json": "sha256-d3kR9HngvZhJy9Ttaozp+xRdB3QraBWK41u1m5fXpi8=",
+    "frontend/src/vendor/nexoidc/oidc.ts": "sha256-kZVjvkenEoPBSi6sjDlK6oRzxqyTeasH1bZUaQtmcRg="
+  },
+  "module": "oidc",
+  "requires": {
+    "httpx": "0.28.1",
+    "pyjwt": "2.15.1"
+  },
+  "vendor_path": "backend/app/vendor/nexoidc",
+  "version": "1.0.8"
+}

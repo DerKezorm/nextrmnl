@@ -1,25 +1,28 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useLocation, useSearchParams } from 'react-router-dom'
 
-import { ApiError, api, errorMessage, errorText } from '../../api/client'
-import type { OidcState, SecondFactorMethod } from '../../api/types'
+import { ApiError, api, errorMessage } from '../../api/client'
+import type { SecondFactorMethod, SignInMethods } from '../../api/types'
 import { useAuth } from '../../auth'
+import { ProviderButtons } from '../../components/ProviderButtons'
 import { Symbol } from '../../components/Symbol'
 import { Banner, Button, Field } from '../../components/ui'
-import { oidcStartHref } from '../../lib/oidcStart'
 import { useLoad } from '../../lib/useLoad'
 import { passkeysAvailable } from '../../lib/webauthn'
+import { oidcErrorKey } from '../../vendor/nexoidc/oidc'
 import { AuthFrame } from './AuthFrame'
+
+const NO_METHODS: SignInMethods = { password: true, providers: [] }
 
 export function LoginPage() {
   const { t } = useTranslation()
   const { signIn, signInCode, signInPasskey, cancelSecondFactor } = useAuth()
-  const [params] = useSearchParams()
+  const [params, setParams] = useSearchParams()
   // Signed out, every address shows this page; the address is the page the person came for.
   const location = useLocation()
-  const oidc = useLoad(() => api.get<OidcState>('/api/oidc/state').catch(() => ({ enabled: false, provider_name: '' })))
+  const available = useLoad(() => api.get<SignInMethods>('/api/auth/methods').catch(() => NO_METHODS))
   const [name, setName] = useState('')
   const [password, setPassword] = useState('')
   // The second step, when the account has a second factor: a code from the app or a recovery code.
@@ -27,8 +30,42 @@ export function LoginPage() {
   const [code, setCode] = useState('')
   const [recovery, setRecovery] = useState(false)
   const [methods, setMethods] = useState<SecondFactorMethod[]>([])
-  const [error, setError] = useState<string | null>(params.get('error') ? errorText(params.get('error')) || t('errors.generic') : null)
+  // Only codes of the shared sign-in module come through the address, never shown raw.
+  const shownError = (code: string | null) => {
+    const key = oidcErrorKey(code)
+    return key ? t(key) : code ? t('errors.generic') : null
+  }
+  const [error, setError] = useState<string | null>(shownError(params.get('error')))
   const [busy, setBusy] = useState(false)
+  // Password sign-in off: only the buttons, and below them small the operator's way in.
+  const [operatorWay, setOperatorWay] = useState(false)
+  const methodsOf = available.data ?? NO_METHODS
+  const passwordShown = methodsOf.password || operatorWay
+
+  // Back from a provider that does not check the second factor itself: the code of nextrmnl's own is still due.
+  const codeStep = params.get('step') === 'code'
+  useEffect(() => {
+    if (!codeStep) return
+    let current = true
+    api
+      .get<{ name: string; methods: SecondFactorMethod[] }>('/api/auth/login/pending')
+      .then((waiting) => {
+        if (!current) return
+        setName(waiting.name)
+        setMethods(waiting.methods)
+        setRecovery(!waiting.methods.includes('totp'))
+        setStep('code')
+      })
+      .catch((caught: unknown) => {
+        if (current) setError(errorMessage(caught))
+      })
+      .finally(() => {
+        if (current) setParams({}, { replace: true })
+      })
+    return () => {
+      current = false
+    }
+  }, [codeStep, setParams])
 
   async function submitPassword() {
     if (!name.trim() || !password) {
@@ -160,29 +197,31 @@ export function LoginPage() {
     <AuthFrame>
       <form className="flex flex-col gap-4" onSubmit={submit} noValidate>
         <h1 className="text-xl font-bold">{t('auth.title')}</h1>
-        <Field label={t('auth.name')} autoComplete="username" autoFocus value={name} spellCheck={false} onChange={(event) => setName(event.target.value)} />
-        <Field
-          label={t('auth.password')}
-          type="password"
-          autoComplete="current-password"
-          value={password}
-          onChange={(event) => {
-            setPassword(event.target.value)
-            setError(null)
-          }}
-        />
-        {error && <Banner tone="bad">{error}</Banner>}
-        <Button type="submit" loading={busy}>
-          {t('auth.signIn')}
-        </Button>
-        {oidc.data?.enabled && (
+        {error && !passwordShown && <Banner tone="bad">{error}</Banner>}
+        {passwordShown && (
           <>
-            <p className="text-center text-xs text-mist-600">{t('auth.or')}</p>
-            <a href={oidcStartHref(location.pathname)} className="inline-flex items-center justify-center gap-2 rounded-full border border-ink-700 bg-ink-850 px-5 py-2.5 text-sm font-semibold text-mist-300 hover:bg-ink-800 hover:text-mist-100">
-              <Symbol name="shield" />
-              {t('auth.oidc', { provider: oidc.data.provider_name || 'OIDC' })}
-            </a>
+            <Field label={t('auth.name')} autoComplete="username" autoFocus value={name} spellCheck={false} onChange={(event) => setName(event.target.value)} />
+            <Field
+              label={t('auth.password')}
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(event) => {
+                setPassword(event.target.value)
+                setError(null)
+              }}
+            />
+            {error && <Banner tone="bad">{error}</Banner>}
+            <Button type="submit" loading={busy}>
+              {t('auth.signIn')}
+            </Button>
           </>
+        )}
+        <ProviderButtons providers={methodsOf.providers} next={location.pathname} withOr={passwordShown} />
+        {!passwordShown && available.data && (
+          <button type="button" className="text-center text-xs text-mist-500 hover:text-mist-100" onClick={() => setOperatorWay(true)}>
+            {t('oidc.login.operator')}
+          </button>
         )}
       </form>
     </AuthFrame>

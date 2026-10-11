@@ -16,7 +16,7 @@ from app import deps
 from app.config import get_settings
 from app.db import SessionLocal
 from app.main import app
-from app.models import SIGN_IN_OIDC
+from app.models import SIGN_IN_OIDC, OidcProvider
 from app.services import accounts, backups, oidc_store, settings_service, totp
 from tests.conftest import PASSWORD, UI, sign_in
 from tests.oidc_helpers import FakeProvider, add_provider, fresh_browser, link, location, sign_in_via_oidc
@@ -412,3 +412,58 @@ def test_the_authentik_card_sees_the_scheme_a_trusted_proxy_tells(
     stranger = seen_through("198.51.100.7")
     assert stranger["seen"] == "http://rmnl.example.com" and stranger["proxy_ignored"] is True
 
+
+
+# --- Emptying the public address asks as well -------------------------------------------------------------------------
+
+PUBLIC = "https://rmnl.example.com"
+
+
+def _button_entry(provider: FakeProvider, client: TestClient, registered: str) -> None:
+    """An entry the authentik button made, with the return address it registered there."""
+    entry = add_provider(client, provider, slug="authentik")
+    with SessionLocal() as db:
+        row = db.get(OidcProvider, entry["id"])
+        assert row is not None
+        row.managed, row.registered_redirect = "authentik", registered
+        db.commit()
+
+
+def test_emptying_the_public_address_asks_when_authentik_knows_it(
+    client: TestClient, operator: dict, provider: FakeProvider
+) -> None:
+    """Without the address the sign-in falls back to the request's own, which changes the return address as much as
+    a new one does: so the question comes, and nothing is saved until the operator says yes."""
+    saved = client.put("/api/settings", json={"public_url": PUBLIC}, headers=UI)
+    assert saved.status_code == 200, saved.text
+    _button_entry(provider, client, PUBLIC + "/api/oidc/authentik/callback")
+
+    asked = client.put("/api/settings", json={"public_url": ""}, headers=UI)
+    assert asked.status_code == 409, asked.text
+    detail = asked.json()["detail"]
+    assert detail["code"] == "public_url_change" and detail["count"] == 1
+    assert client.get("/api/settings").json()["public_url"] == PUBLIC
+
+    confirmed = client.put("/api/settings", json={"public_url": "", "public_url_confirm": True}, headers=UI)
+    assert confirmed.status_code == 200, confirmed.text
+    assert client.get("/api/settings").json()["public_url"] == ""
+
+
+def test_the_question_about_the_address_takes_the_scheme_a_trusted_proxy_tells(
+    client: TestClient, operator: dict, provider: FakeProvider, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The address the sign-in falls back to is the one the proxy shows: behind a trusted TLS proxy it is https, so
+    emptying a https address leaves the return address as it is (no question); from anybody else the header counts
+    for nothing, the fall-back is http, and the question comes."""
+    monkeypatch.setattr(get_settings(), "trusted_proxies", "203.0.113.0/24")
+    _button_entry(provider, client, PUBLIC + "/api/oidc/authentik/callback")
+
+    def empty_it(peer: str) -> int:
+        with SessionLocal() as db:
+            settings_service.save(db, {"public_url": PUBLIC})
+        browser = TestClient(app, base_url="http://rmnl.example.com", client=(peer, 50000), headers=UI)
+        sign_in(browser, "admin")
+        return browser.put("/api/settings", json={"public_url": ""}, headers={"X-Forwarded-Proto": "https"}).status_code
+
+    assert empty_it("198.51.100.7") == 409
+    assert empty_it("203.0.113.5") == 200

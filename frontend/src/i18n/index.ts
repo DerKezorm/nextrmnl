@@ -10,7 +10,7 @@
 import i18n from 'i18next'
 import { initReactI18next } from 'react-i18next'
 
-import { oidcWording, type OidcWording } from '../vendor/nexoidc/oidc'
+import { oidcVariables, oidcWording, type OidcWording } from '../vendor/nexoidc/oidc'
 
 type Texts = Record<string, unknown>
 
@@ -32,7 +32,7 @@ export const LANGUAGES = {
 /** The app's texts with the module's merged in. The module's keys live under `oidc`, which the app's files leave free. */
 async function textsOf(language: Language): Promise<Texts> {
   const [{ default: own }, { default: shared }] = await Promise.all([LANGUAGES[language].load(), LANGUAGES[language].oidc()])
-  return { ...own, ...oidcWording(shared as OidcWording, { singleAccount: false }) }
+  return { ...own, ...oidcWording(shared as OidcWording, { singleAccount: false, invitations: true }) }
 }
 
 export type Language = keyof typeof LANGUAGES
@@ -74,7 +74,7 @@ export async function startI18n(language: Language = initialLanguage()): Promise
     lng: language,
     fallbackLng: false,
     // `{{app}}` in the module's words is the name of this app.
-    interpolation: { escapeValue: false, defaultVariables: { app: 'nextrmnl' } },
+    interpolation: { escapeValue: false, defaultVariables: oidcVariables('nextrmnl') },
   })
   document.documentElement.lang = language
 }

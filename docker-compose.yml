@@ -40,7 +40,7 @@ services:
       # NEXTRMNL_PUBLIC_URL: https://nextrmnl.example.com
 
       # Behind a reverse proxy: its address or network, so that X-Forwarded-For and X-Forwarded-Proto are
-      # believed from it: the sign-in brake and the session history see the real clients, and the sign-in
-      # settings know that the address is https. Without it the proxy itself counts as the client for
-      # everybody, which is safe but coarse.
+      # believed from it, and from nobody else: the sign-in brake and the session history see the real clients,
+      # the session cookie is Secure, and the sign-in settings know that the address is https. Without it the
+      # proxy itself counts as the client for everybody, which is safe but coarse, and nextrmnl sees http.
       # NEXTRMNL_TRUSTED_PROXIES: 172.18.0.0/16

@@ -70,7 +70,9 @@ def client_ip(request: Request | WebSocket) -> str:
     and would let a guesser pick a fresh address for every try.
     """
     peer = (request.client.host if request.client else "-")[:64]
-    forwarded = request.headers.get("x-forwarded-for", "")
+    # All header lines, in the order they came: a proxy may add its own line below the one the sender brought
+    # (HAProxy's ``option forwardfor`` does), and the first line alone would be the sender's word.
+    forwarded = ",".join(request.headers.getlist("x-forwarded-for"))
     if not forwarded or not _is_trusted_proxy(peer):
         return peer
     hops = [hop.strip() for hop in forwarded.split(",") if hop.strip()]
@@ -80,22 +82,42 @@ def client_ip(request: Request | WebSocket) -> str:
     return (hops[0] if hops else peer)[:64]
 
 
+def forwarded_proto(request: Request) -> str:
+    """``http`` or ``https`` as a trusted proxy names it in ``X-Forwarded-Proto``, else an empty text.
+
+    The one reading of the header in nextrmnl. Only a peer in ``NEXTRMNL_TRUSTED_PROXIES`` (the proxies whose
+    ``X-Forwarded-For`` is believed already) is asked; the list is empty unless the operator sets it, so nobody is
+    trusted from the start. Of that peer's header the rightmost value of the last line counts: the nearest proxy
+    wrote it, while anything left of it, or a line above, may be what the sender brought along. Case does not
+    matter; any value but ``http`` and ``https`` counts as none. (No WebSocket asks for a scheme here, so ``ws`` and
+    ``wss`` are not taken.)"""
+    peer = request.client.host if request.client else ""
+    if not peer or not _is_trusted_proxy(peer):
+        return ""
+    lines = request.headers.getlist("x-forwarded-proto")
+    if not lines:
+        return ""
+    said = lines[-1].rsplit(",", 1)[-1].strip().lower()
+    return said if said in ("http", "https") else ""
+
+
 def request_base(request: Request) -> str:
     """The address this request came to as the app should see it, with a slash at the end (``request.base_url``).
 
-    Behind a reverse proxy that ends TLS the request arrives as ``http``. The scheme is the proxy's to tell, so
-    ``X-Forwarded-Proto`` is taken from a peer that is one of ``NEXTRMNL_TRUSTED_PROXIES`` (the proxies whose
-    ``X-Forwarded-For`` is believed already) and from nobody else, and then the value the nearest proxy wrote (the
-    rightmost). Nothing else of the header is used: not the host, not the port. Without trusted proxies the address is
-    the request's own, as before."""
+    Behind a reverse proxy that ends TLS the request arrives as ``http``. The scheme is the proxy's to tell, so it
+    comes from ``forwarded_proto`` (trusted proxies only). Nothing else of the proxy's headers is used: not
+    ``X-Forwarded-Host``, not a port; the host is the request's ``Host``. Without trusted proxies the address is the
+    request's own."""
     base = request.base_url
-    peer = request.client.host if request.client else ""
-    if peer and _is_trusted_proxy(peer):
-        values = [part.strip().lower() for part in request.headers.get("x-forwarded-proto", "").split(",")]
-        scheme = values[-1] if values else ""
-        if scheme in ("http", "https"):
-            base = base.replace(scheme=scheme)
+    scheme = forwarded_proto(request)
+    if scheme:
+        base = base.replace(scheme=scheme)
     return str(base)
+
+
+def request_is_https(request: Request) -> bool:
+    """Whether the browser reached nextrmnl over HTTPS: the connection's own scheme, or a trusted proxy's word."""
+    return request_base(request).startswith("https://")
 
 
 # --- Proving the password once more while signed in ------------------------------------------------------------ #

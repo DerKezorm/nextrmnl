@@ -21,6 +21,7 @@ from ..deps import (
     reauth_guard,
     reauth_succeeded,
     request_base,
+    request_is_https,
 )
 from ..meldungen import fehler, meldung
 from ..models import ROLES, SIGN_IN_PASSWORD, Account
@@ -79,8 +80,9 @@ def _secure(request: Request) -> bool:
         return True
     if mode == "off":
         return False
-    forwarded = request.headers.get("x-forwarded-proto", "")
-    return request.url.scheme == "https" or forwarded.split(",")[0].strip() == "https"
+    # The connection's own scheme, or X-Forwarded-Proto from a proxy in NEXTRMNL_TRUSTED_PROXIES (rightmost value
+    # of the last line), never the header of just any sender. Behind a proxy nextrmnl was not told about: "on".
+    return request_is_https(request)
 
 
 def _set_cookie(response: Response, request: Request, token: str) -> None:

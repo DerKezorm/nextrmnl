@@ -109,7 +109,8 @@ protects your vault.
 
 **Put nextrmnl behind a reverse proxy with TLS** before you use it from anywhere but your own desk. It holds the
 access to your machines. Pasting with a right click also needs HTTPS; the browser allows reading the clipboard
-only on secure origins (Ctrl+V works regardless).
+only on secure origins (Ctrl+V works regardless). Name the proxy in `NEXTRMNL_TRUSTED_PROXIES` (see below):
+nextrmnl takes `https` and the client's address from it and from nobody else.
 
 ## Where things are stored
 
@@ -127,10 +128,10 @@ open with the account's password only. Both go into the backup archive.
 | `NEXTRMNL_SECRET_KEY` | created on first start | Protects the server-side secrets; when set, it wins over `secret.key` |
 | `NEXTRMNL_PUBLIC_URL` | from the request | The address people use to reach nextrmnl; for invitation links and the OIDC redirect. The public address under Settings, Sign-in wins when set |
 | `NEXTRMNL_LOG_LEVEL` | stored setting | `quiet`, `normal`, `detailed` or `trace`; overrides the setting, the emergency exit when the app does not start |
-| `NEXTRMNL_TRUSTED_PROXIES` | none | Addresses or networks of reverse proxies whose `X-Forwarded-For` and `X-Forwarded-Proto` are believed, comma separated (`172.18.0.0/16, 10.0.0.5`). Without it every request counts as coming from its peer, so a proxy in front makes all its clients share one sign-in brake, and the sign-in settings warn that the server sees `http` behind a proxy that ends TLS |
+| `NEXTRMNL_TRUSTED_PROXIES` | none | Addresses or networks of reverse proxies whose `X-Forwarded-For` and `X-Forwarded-Proto` are believed, comma separated (`172.18.0.0/16, 10.0.0.5`). No other sender is believed, `127.0.0.1` included. Without it every request counts as coming from its peer and with the scheme of its connection: a proxy in front makes all its clients share one sign-in brake, and behind a proxy that ends TLS the session cookie is not `Secure` (unless `NEXTRMNL_COOKIE_SECURE` is `on`), passkeys need the public address, and the sign-in settings warn that the server sees `http` |
 | `NEXTRMNL_SESSION_DAYS` | `14` | A browser session ends after this many days |
 | `NEXTRMNL_API_DOCS` | `false` | Serves `/api/docs` and `/api/openapi.json`; off by default |
-| `NEXTRMNL_COOKIE_SECURE` | `auto` | `on`, `off` or `auto` (from the request or `X-Forwarded-Proto`) |
+| `NEXTRMNL_COOKIE_SECURE` | `auto` | `on`, `off` or `auto` (HTTPS when the connection is, or when a proxy in `NEXTRMNL_TRUSTED_PROXIES` says so in `X-Forwarded-Proto`) |
 | `NEXTRMNL_PORT` | `8000` | Port inside the container, for host networking |
 | `PUID`, `PGID` | `1000` | Owner of the files in the data directory |
 

@@ -35,6 +35,8 @@ class Settings(BaseSettings):
     argon2_time: int = 3
     argon2_memory_kib: int = 65536
     argon2_parallelism: int = 2
+    #: ``auto``: the session cookie is ``Secure`` when the request came over HTTPS or a trusted proxy (below) says
+    #: so in ``X-Forwarded-Proto``. ``on`` for a proxy that ends TLS and is not in the list.
     cookie_secure: str = "auto"
     disable_background: bool = False
     frontend_dist: Path = PROJECT_DIR / "frontend" / "dist"
@@ -42,9 +44,10 @@ class Settings(BaseSettings):
     log_level: str = ""
     #: Where the app is reached from outside, for OIDC redirects. Empty: taken from the request.
     public_url: str = ""
-    #: Addresses or networks of reverse proxies whose ``X-Forwarded-For`` may be believed, comma separated
-    #: (``172.18.0.0/16, 10.0.0.5``). Empty: the header is ignored and the peer address counts, so that a sender
-    #: cannot dodge the sign-in brake by making up addresses.
+    #: Addresses or networks of reverse proxies whose ``X-Forwarded-For`` and ``X-Forwarded-Proto`` may be believed,
+    #: comma separated (``172.18.0.0/16, 10.0.0.5``). Empty: both headers are ignored, the peer address counts and
+    #: the scheme is the connection's, so that a sender can neither dodge the sign-in brake by making up addresses
+    #: nor talk the app into https.
     trusted_proxies: str = ""
     #: Serves /api/docs and /api/openapi.json. Off by default: the route list of a security product is not for
     #: whoever finds the address.

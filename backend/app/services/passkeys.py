@@ -1,8 +1,8 @@
 """Passkeys and security keys as the second factor (WebAuthn), checked by ``py_webauthn``.
 
 The relying party is nextrmnl's own address: the public address from the settings when set, otherwise the one the
-browser used. Browsers offer WebAuthn only on HTTPS and on localhost; on ``http://192.0.2.10`` it is not there,
-and the API says so instead of failing halfway.
+browser used (its Host; HTTPS when the connection is, or a trusted proxy says so). Browsers offer WebAuthn only on
+HTTPS and on localhost; on ``http://192.0.2.10`` it is not there, and the API says so instead of failing halfway.
 
 Challenges live in memory for five minutes: one per account for adding a key, one per parked password step for
 signing in. Nothing about a challenge reaches the log; credential ids appear only as their first characters.
@@ -37,6 +37,7 @@ from webauthn.helpers.structs import (
     UserVerificationRequirement,
 )
 
+from ..deps import request_base
 from ..models import Account, Passkey, utcnow
 from . import settings_service
 
@@ -77,9 +78,10 @@ def party(db: Session, request: Request) -> Party:
         parts = urlsplit(base)
         scheme, host, netloc = parts.scheme, parts.hostname or "", parts.netloc
     else:
-        scheme = request.headers.get("x-forwarded-proto", request.url.scheme).split(",")[0].strip() or "http"
-        netloc = request.headers.get("host") or request.url.netloc
-        host = urlsplit(f"{scheme}://{netloc}").hostname or ""
+        # The request's own address: its Host, and the scheme of the connection or of a trusted proxy
+        # (deps.request_base), never X-Forwarded-Proto or X-Forwarded-Host of just any sender.
+        parts = urlsplit(request_base(request))
+        scheme, host, netloc = parts.scheme, parts.hostname or "", parts.netloc
     if not host:
         raise PasskeyError("passkeys_need_https", "Passkeys need nextrmnl on HTTPS.", 409)
     if scheme != "https" and host not in LOCAL_HOSTS:

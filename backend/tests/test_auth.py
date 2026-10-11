@@ -2,7 +2,7 @@ from fastapi.testclient import TestClient
 
 from app.security import MAX_FAILURES
 from app.services import vault
-from tests.conftest import PASSWORD, UI, invite_member, sign_in
+from tests.conftest import PASSWORD, UI, invite_member, session_token, sign_in
 
 
 def test_setup_creates_operator_and_signs_in(client: TestClient) -> None:
@@ -99,7 +99,7 @@ def test_password_change_rewraps_the_vault(client: TestClient, operator: dict) -
     from app.db import SessionLocal
 
     with SessionLocal() as db:
-        _row, text = vault.private_key_text(db, body["id"], keys[0]["id"])
+        _row, text = vault.private_key_text(db, body["id"], session_token(client), keys[0]["id"])
     assert "PRIVATE KEY" in text
 
 

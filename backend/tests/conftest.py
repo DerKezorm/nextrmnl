@@ -72,6 +72,13 @@ def operator(client: TestClient) -> dict:
     return response.json()
 
 
+def session_token(client: TestClient) -> str:
+    """The browser session of a test client: the vault is open per session."""
+    token = client.cookies.get("nextrmnl_session")
+    assert token, "not signed in"
+    return token
+
+
 def sign_in(client: TestClient, name: str, password: str = PASSWORD) -> dict:
     response = client.post("/api/auth/login", json={"name": name, "password": password}, headers=UI)
     assert response.status_code == 200, response.text

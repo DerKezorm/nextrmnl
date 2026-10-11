@@ -20,7 +20,7 @@ from app.models import Account, Connection
 from app.routers.sessions import _disposition
 from app.security import MAX_FAILURES, brake
 from app.services import accounts, backups, ssh, vault, vault_file
-from tests.conftest import PASSWORD, UI, invite_member, sign_in
+from tests.conftest import PASSWORD, UI, invite_member, session_token, sign_in
 from tests.helpers_sshd import PASSWORD as SSH_PASSWORD
 from tests.helpers_sshd import Sshd, connect_ws, open_session, receive_json, running_sshd
 from tests.oidc_helpers import FakeProvider, add_provider
@@ -187,12 +187,12 @@ def test_a_stored_password_stays_with_its_target(client: TestClient, operator: d
     cid = client.post("/api/connections", json=connection_payload("box", "192.0.2.10"), headers=UI).json()["id"]
     assert client.put(f"/api/vault/passwords/{cid}", json={"password": "pw-for-this-box"}, headers=UI).status_code == 200
     with SessionLocal() as db:
-        assert vault.get_password(db, operator["id"], cid, host="192.0.2.10", port=22, user="admin") == "pw-for-this-box"
-        assert vault.get_password(db, operator["id"], cid, host="192.0.2.99", port=22, user="admin") is None
-        assert vault.get_password(db, operator["id"], cid, host="192.0.2.10", port=2222, user="admin") is None
-        assert vault.get_password(db, operator["id"], cid, host="192.0.2.10", port=22, user="root") is None
+        assert vault.get_password(db, operator["id"], session_token(client), cid, host="192.0.2.10", port=22, user="admin") == "pw-for-this-box"
+        assert vault.get_password(db, operator["id"], session_token(client), cid, host="192.0.2.99", port=22, user="admin") is None
+        assert vault.get_password(db, operator["id"], session_token(client), cid, host="192.0.2.10", port=2222, user="admin") is None
+        assert vault.get_password(db, operator["id"], session_token(client), cid, host="192.0.2.10", port=22, user="root") is None
         # Without a target to compare (the vault page, tests) the password is what it always was.
-        assert vault.get_password(db, operator["id"], cid) == "pw-for-this-box"
+        assert vault.get_password(db, operator["id"], session_token(client), cid) == "pw-for-this-box"
 
 
 def test_the_owners_start_command_never_runs_for_a_member(client: TestClient, operator: dict) -> None:

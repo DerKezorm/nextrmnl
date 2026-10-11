@@ -3,8 +3,9 @@ from fastapi.testclient import TestClient
 
 from app import crypto
 from app.db import SessionLocal
+from app.security import hash_token
 from app.services import vault
-from tests.conftest import UI, invite_member
+from tests.conftest import UI, invite_member, session_token
 
 
 def test_crypto_wrap_and_entries() -> None:
@@ -79,7 +80,7 @@ def test_vault_is_per_account(client: TestClient, operator: dict) -> None:
     assert member.delete(f"/api/vault/keys/{key_id}", headers=UI).status_code == 404
     with SessionLocal() as db:
         try:
-            vault.private_key_text(db, member.get("/api/auth/me").json()["id"], key_id)
+            vault.private_key_text(db, member.get("/api/auth/me").json()["id"], session_token(member), key_id)
         except LookupError:
             pass
         else:
@@ -96,7 +97,7 @@ def test_stored_passwords(client: TestClient, operator: dict) -> None:
     assert stored.status_code == 200 and "password" not in stored.json()
     assert client.get("/api/vault/passwords").json()[0]["connection_id"] == cid
     with SessionLocal() as db:
-        assert vault.get_password(db, operator["id"], cid) == "stored-pw-1"
+        assert vault.get_password(db, operator["id"], session_token(client), cid) == "stored-pw-1"
     assert client.delete(f"/api/vault/passwords/{cid}", headers=UI).status_code == 204
     assert client.get("/api/vault/passwords").json() == []
 
@@ -107,7 +108,7 @@ def test_idle_vault_locks_itself(client: TestClient, operator: dict) -> None:
     from app.models import utcnow
 
     with vault._lock:
-        opened = vault._open[operator["id"]]
+        opened = vault._open[hash_token(session_token(client))]
         opened.until = utcnow() - timedelta(seconds=1)
     assert vault.sweep() == 1
     assert client.get("/api/vault").json()["state"] == "locked"

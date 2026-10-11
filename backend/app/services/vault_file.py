@@ -145,10 +145,10 @@ def prove_password(account: Account, password: str) -> None:
         raise _wrong_password() from error
 
 
-def collect(db: Session, account: Account) -> Payload:
+def collect(db: Session, account: Account, token: str | None) -> Payload:
     """Every entry of the open vault in the clear, for sealing into a file. Never leaves this module unsealed."""
     try:
-        key = vault.key_for(account.id)
+        key = vault.key_for(account.id, token)
     except vault.VaultLocked as error:
         raise _locked() from error
     keys = [
@@ -204,12 +204,12 @@ def seal(payload: Payload, password: str, account: str, server: str) -> bytes:
     return json.dumps(document, indent=2).encode("utf-8")
 
 
-def export(db: Session, account: Account, password: str, server: str) -> bytes:
+def export(db: Session, account: Account, token: str | None, password: str, server: str) -> bytes:
     """The whole vault as a file. The vault must be open, and the password must be the vault password."""
-    if not vault.is_open(account.id):
+    if not vault.is_open(account.id, token):
         raise _locked()
     prove_password(account, password)
-    payload = collect(db, account)
+    payload = collect(db, account, token)
     logger.info(
         "Vault exported account=%s key_count=%s password_count=%s",
         account.name,
@@ -316,7 +316,9 @@ def _parsed(entry: dict[str, Any], text: str) -> vault.ParsedKey | None:
         return None
 
 
-def import_(db: Session, account: Account, payload: Payload, mode: str = MERGE) -> ImportResult:
+def import_(
+    db: Session, account: Account, token: str | None, payload: Payload, mode: str = MERGE
+) -> ImportResult:
     """Take the entries of a file into the own vault, re-encrypted with the own vault key.
 
     ``merge``: keys whose name exists are skipped; a password goes to the connection visible to the account with
@@ -328,7 +330,7 @@ def import_(db: Session, account: Account, payload: Payload, mode: str = MERGE) 
     if mode not in MODES:
         raise VaultFileError("invalid_mode", "Choose merge or replace.", 422)
     try:
-        vault.key_for(account.id)
+        vault.key_for(account.id, token)
     except vault.VaultLocked as error:
         raise _locked() from error
     result = ImportResult()
@@ -350,7 +352,7 @@ def import_(db: Session, account: Account, payload: Payload, mode: str = MERGE) 
             result.skipped_keys += 1
             continue
         try:
-            vault.add_key(db, account, name, text, parsed)
+            vault.add_key(db, account, token, name, text, parsed)
         except vault.VaultLocked as error:
             raise _locked() from error
         names.add(name)
@@ -368,7 +370,9 @@ def import_(db: Session, account: Account, payload: Payload, mode: str = MERGE) 
             result.skipped_passwords += 1
             continue
         try:
-            vault.set_password(db, account, connection_id, secret_text, host=target[0], port=target[1], user=target[2])
+            vault.set_password(
+                db, account, token, connection_id, secret_text, host=target[0], port=target[1], user=target[2]
+            )
         except vault.VaultLocked as error:
             raise _locked() from error
         stored.add(connection_id)

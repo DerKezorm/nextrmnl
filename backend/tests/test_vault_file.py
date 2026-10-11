@@ -13,7 +13,7 @@ from app import crypto
 from app.db import SessionLocal
 from app.main import app
 from app.services import vault, vault_file
-from tests.conftest import PASSWORD, UI
+from tests.conftest import PASSWORD, UI, session_token
 
 OTHER_PASSWORD = "another-vault-secret-xyz"
 
@@ -180,13 +180,13 @@ def test_merge_adds_what_is_missing_and_re_encrypts_with_the_own_key(client: Tes
     operator_fingerprint = next(k for k in client.get("/api/vault/keys").json() if k["name"] == "homelab")["fingerprint"]
     assert keys["homelab"]["fingerprint"] == operator_fingerprint
     with SessionLocal() as db:
-        _row, text = vault.private_key_text(db, member_id, keys["homelab"]["id"])
+        _row, text = vault.private_key_text(db, member_id, session_token(member), keys["homelab"]["id"])
         assert text.startswith("-----BEGIN OPENSSH PRIVATE KEY-----")
-        assert vault.get_password(db, member_id, ids["switch"]) == "switch-pw"
-        assert vault.get_password(db, member_id, ids["private"]) is None
+        assert vault.get_password(db, member_id, session_token(member), ids["switch"]) == "switch-pw"
+        assert vault.get_password(db, member_id, session_token(member), ids["private"]) is None
     # The operator's own entries are untouched.
     with SessionLocal() as db:
-        assert vault.get_password(db, operator["id"], ids["private"]) == "private-pw"
+        assert vault.get_password(db, operator["id"], session_token(client), ids["private"]) == "private-pw"
 
     # A second merge adds nothing: everything is there already.
     again = member.post("/api/vault/file/import", files=files, data={"password": PASSWORD, "mode": "merge"}, headers=UI)
@@ -208,7 +208,7 @@ def test_replace_throws_the_own_entries_away_first(client: TestClient, operator:
     assert replaced.json() == {"added_keys": 2, "skipped_keys": 0, "added_passwords": 1, "skipped_passwords": 1}
     assert sorted(key["name"] for key in member.get("/api/vault/keys").json()) == ["homelab", "laptop"]
     with SessionLocal() as db:
-        assert vault.get_password(db, member_id, ids["switch"]) == "switch-pw"
+        assert vault.get_password(db, member_id, session_token(member), ids["switch"]) == "switch-pw"
 
     unknown = member.post("/api/vault/file/import", files=files, data={"password": PASSWORD, "mode": "wipe"}, headers=UI)
     assert unknown.status_code == 422 and unknown.json()["detail"]["code"] == "invalid_mode"
@@ -236,6 +236,6 @@ def test_an_unreadable_key_in_the_file_is_skipped_not_stored(client: TestClient,
         from app.models import Account
 
         account = db.get(Account, operator["id"])
-        result = vault_file.import_(db, account, payload)
+        result = vault_file.import_(db, account, session_token(client), payload)
     assert (result.added_keys, result.skipped_keys, result.added_passwords, result.skipped_passwords) == (0, 1, 0, 1)
     assert client.get("/api/vault/keys").json() == []

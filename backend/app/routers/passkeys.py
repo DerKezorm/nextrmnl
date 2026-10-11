@@ -16,7 +16,7 @@ from ..deps import CurrentAccount, DbSession, check_csrf, client_ip
 from ..meldungen import fehler, meldung
 from ..models import SIGN_IN_PASSWORD, Account
 from ..security import SESSION_COOKIE, brake
-from ..services import accounts, passkeys, settings_service, totp, vault
+from ..services import accounts, passkeys, totp
 from .auth import PENDING_COOKIE, account_view, sign_in_response
 from .totp import _check_password, _clear_pending_cookie
 
@@ -159,7 +159,5 @@ def login_finish(payload: AssertionIn, request: Request, response: Response, db:
     accounts.note_success(db, account)
     totp.finish_pending(token)
     _clear_pending_cookie(response)
-    if pending.vault_key is not None and account.vault_ready:
-        vault.open_with_key(account, pending.vault_key, int(settings_service.get(db, "vault_lock_minutes")))
     logger.info("Second factor passed with a passkey account=%s", account.name)
-    return sign_in_response(db, request, response, account)
+    return sign_in_response(db, request, response, account, vault_key=pending.vault_key)

@@ -1,8 +1,11 @@
-"""The vault: one per account, open only while the account's password has been given.
+"""The vault: one per account, open only in a browser session that gave the account's password.
 
-An open vault is nothing but its unwrapped key in this process's memory, with an idle timer. Every access
-extends the timer; after ``vault_lock_minutes`` without use the key is forgotten and the vault is locked.
-A restart of the process locks every vault.
+An open vault is nothing but its unwrapped key in this process's memory, held for one browser session (by the hash
+of its token, never the token) with an idle timer. Another browser of the same account, or a session that came
+through a sign-in provider, does not share it: each session opens the vault with the password itself. Every access
+extends the timer; after ``vault_lock_minutes`` without use the key is forgotten and the vault is locked for that
+session. Signing out forgets it for that session; a new password, a deleted or signed-out account forgets it for
+every other session. A restart of the process locks every vault.
 
 Nothing in here logs a key, a password or a passphrase. Names and counts only.
 """
@@ -11,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -19,7 +23,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .. import crypto
-from ..models import KEY_TYPES, Account, ConnectionShare, VaultKey, VaultPassword, active_share, utcnow
+from ..db import SessionLocal
+from ..models import KEY_TYPES, Account, AuthSession, ConnectionShare, VaultKey, VaultPassword, active_share, utcnow
+from ..security import hash_token
 
 logger = logging.getLogger("nextrmnl.vault")
 
@@ -34,46 +40,58 @@ class VaultNotSetUp(Exception):
 
 @dataclass
 class Opened:
+    account_id: int
     key: bytes
     until: datetime
     idle: timedelta
 
 
-_open: dict[int, Opened] = {}
+#: Open vaults by the hash of their browser session's token.
+_open: dict[str, Opened] = {}
 _lock = threading.Lock()
 
 
-def is_open(account_id: int) -> bool:
-    with _lock:
-        opened = _open.get(account_id)
-        if opened is None:
-            return False
-        if opened.until <= utcnow():
-            del _open[account_id]
-            logger.info("Vault locked after idle time account_id=%s", account_id)
-            return False
-        return True
+def _slot(token: str | None) -> str | None:
+    return hash_token(token) if token else None
 
 
-def key_for(account_id: int) -> bytes:
-    """The vault key, or ``VaultLocked``. Extends the idle timer."""
+def _get(account_id: int, token: str | None, now: datetime) -> Opened | None:
+    """The open vault of this browser session, if it belongs to the account and has not run out. A run-out one is
+    forgotten. The caller holds ``_lock``."""
+    slot = _slot(token)
+    if slot is None:
+        return None
+    opened = _open.get(slot)
+    if opened is None or opened.account_id != account_id:
+        return None
+    if opened.until <= now:
+        del _open[slot]
+        logger.info("Vault locked after idle time account_id=%s", account_id)
+        return None
+    return opened
+
+
+def is_open(account_id: int, token: str | None) -> bool:
+    """Whether the vault is open in the browser session of this token."""
     with _lock:
-        opened = _open.get(account_id)
+        return _get(account_id, token, utcnow()) is not None
+
+
+def key_for(account_id: int, token: str | None) -> bytes:
+    """The vault key of the browser session of this token, or ``VaultLocked``. Extends the idle timer."""
+    with _lock:
         now = utcnow()
-        if opened is None or opened.until <= now:
-            _open.pop(account_id, None)
+        opened = _get(account_id, token, now)
+        if opened is None:
             raise VaultLocked()
         opened.until = now + opened.idle
         return opened.key
 
 
-def unlock(account: Account, password: str, idle_minutes: int) -> None:
-    """Opens the vault with the account's password; ``crypto.WrongPassword`` if it is not the one."""
-    key = unwrap_key(account, password)
-    idle = timedelta(minutes=max(1, idle_minutes))
-    with _lock:
-        _open[account.id] = Opened(key=key, until=utcnow() + idle, idle=idle)
-    logger.info("Vault unlocked account=%s", account.name)
+def unlock(account: Account, token: str | None, password: str, idle_minutes: int) -> None:
+    """Opens the vault in the browser session of this token with the account's password; ``crypto.WrongPassword``
+    if it is not the one."""
+    open_with_key(account, token, unwrap_key(account, password), idle_minutes)
 
 
 def unwrap_key(account: Account, password: str) -> bytes:
@@ -83,19 +101,59 @@ def unwrap_key(account: Account, password: str) -> bytes:
     return crypto.unwrap(password, account.vault_salt or b"", account.vault_wrapped or b"", account.vault_kdf or "")
 
 
-def open_with_key(account: Account, key: bytes, idle_minutes: int) -> None:
-    """Opens the vault with a key unwrapped earlier: the second step of a sign-in with a second factor."""
+def open_with_key(account: Account, token: str | None, key: bytes, idle_minutes: int) -> None:
+    """Opens the vault in the browser session of this token with a key unwrapped earlier, while the password was at
+    hand (the first step of a sign-in with a second factor, or just before the session was started)."""
+    slot = _slot(token)
+    if slot is None:
+        raise VaultLocked()
     idle = timedelta(minutes=max(1, idle_minutes))
     with _lock:
-        _open[account.id] = Opened(key=key, until=utcnow() + idle, idle=idle)
+        _open[slot] = Opened(account_id=account.id, key=key, until=utcnow() + idle, idle=idle)
+    # Unwrapping takes a while; the session may have ended meanwhile (signed out in another tab, by the operator),
+    # and its end found nothing to lock yet. Checked after the key is in, on a fresh connection: an end that
+    # commits later locks the slot itself, one that committed earlier is seen here.
+    with SessionLocal() as check:
+        alive = check.scalar(select(AuthSession.id).where(AuthSession.token_hash == slot)) is not None
+    if not alive:
+        lock_sessions([slot])
+        return
     logger.info("Vault unlocked account=%s", account.name)
 
 
-def lock(account_id: int) -> None:
+def _forget(match: Callable[[str, Opened], bool]) -> list[Opened]:
     with _lock:
-        removed = _open.pop(account_id, None) is not None
-    if removed:
-        logger.info("Vault locked account_id=%s", account_id)
+        slots = [slot for slot, opened in _open.items() if match(slot, opened)]
+        return [_open.pop(slot) for slot in slots]
+
+
+def lock(account_id: int) -> None:
+    """Locks the vault in every browser session of the account."""
+    gone = _forget(lambda _slot, opened: opened.account_id == account_id)
+    if gone:
+        logger.info("Vault locked account_id=%s sessions=%s", account_id, len(gone))
+
+
+def lock_others(account_id: int, token: str | None) -> None:
+    """Locks the vault in every browser session of the account but the one of this token."""
+    keep = _slot(token)
+    gone = _forget(lambda slot, opened: opened.account_id == account_id and slot != keep)
+    if gone:
+        logger.info("Vault locked account_id=%s sessions=%s", account_id, len(gone))
+
+
+def lock_session(token: str | None) -> None:
+    """Locks the vault in the browser session of this token only."""
+    slot = _slot(token)
+    if slot is not None:
+        lock_sessions([slot])
+
+
+def lock_sessions(token_hashes: Iterable[str]) -> None:
+    """Locks the vault in the browser sessions of these token hashes (sessions that ended, or one that asked)."""
+    ended = set(token_hashes)
+    for opened in _forget(lambda slot, _opened: slot in ended):
+        logger.info("Vault locked account_id=%s", opened.account_id)
 
 
 def lock_all() -> None:
@@ -106,12 +164,9 @@ def lock_all() -> None:
 def sweep() -> int:
     """Forget keys whose idle time has passed."""
     now = utcnow()
-    with _lock:
-        expired = [account_id for account_id, opened in _open.items() if opened.until <= now]
-        for account_id in expired:
-            del _open[account_id]
-    for account_id in expired:
-        logger.info("Vault locked after idle time account_id=%s", account_id)
+    expired = _forget(lambda _slot, opened: opened.until <= now)
+    for opened in expired:
+        logger.info("Vault locked after idle time account_id=%s", opened.account_id)
     return len(expired)
 
 
@@ -210,8 +265,10 @@ def list_keys(db: Session, account_id: int) -> list[VaultKey]:
     return list(db.scalars(select(VaultKey).where(VaultKey.account_id == account_id).order_by(VaultKey.name)))
 
 
-def add_key(db: Session, account: Account, name: str, private_key_text: str, parsed: ParsedKey) -> VaultKey:
-    key = key_for(account.id)
+def add_key(
+    db: Session, account: Account, token: str | None, name: str, private_key_text: str, parsed: ParsedKey
+) -> VaultKey:
+    key = key_for(account.id, token)
     row = VaultKey(
         account_id=account.id,
         name=name,
@@ -228,11 +285,11 @@ def add_key(db: Session, account: Account, name: str, private_key_text: str, par
     return row
 
 
-def private_key_text(db: Session, account_id: int, key_id: int) -> tuple[VaultKey, str]:
+def private_key_text(db: Session, account_id: int, token: str | None, key_id: int) -> tuple[VaultKey, str]:
     row = db.get(VaultKey, key_id)
     if row is None or row.account_id != account_id:
         raise LookupError("key not found")
-    return row, crypto.decrypt_entry(key_for(account_id), row.private_key_enc).decode("utf-8")
+    return row, crypto.decrypt_entry(key_for(account_id, token), row.private_key_enc).decode("utf-8")
 
 
 def delete_key(db: Session, account: Account, key_id: int) -> bool:
@@ -268,10 +325,18 @@ def _password_row(db: Session, account_id: int, connection_id: int) -> VaultPass
 
 
 def set_password(
-    db: Session, account: Account, connection_id: int, password: str, *, host: str = "", port: int = 0, user: str = ""
+    db: Session,
+    account: Account,
+    token: str | None,
+    connection_id: int,
+    password: str,
+    *,
+    host: str = "",
+    port: int = 0,
+    user: str = "",
 ) -> VaultPassword:
     """Stores the password for the connection as it points now: host, port and user are recorded with it."""
-    key = key_for(account.id)
+    key = key_for(account.id, token)
     row = _password_row(db, account.id, connection_id)
     if row is None:
         row = VaultPassword(account_id=account.id, connection_id=connection_id, password_enc=b"")
@@ -285,7 +350,14 @@ def set_password(
 
 
 def get_password(
-    db: Session, account_id: int, connection_id: int, *, host: str | None = None, port: int = 0, user: str = ""
+    db: Session,
+    account_id: int,
+    token: str | None,
+    connection_id: int,
+    *,
+    host: str | None = None,
+    port: int = 0,
+    user: str = "",
 ) -> str | None:
     """The stored password, but only for the target it was stored for. Somebody else's shared connection can be
     pointed at another machine at any time; the member's password must not follow it there."""
@@ -299,7 +371,7 @@ def get_password(
             connection_id,
         )
         return None
-    return crypto.decrypt_entry(key_for(account_id), row.password_enc).decode("utf-8")
+    return crypto.decrypt_entry(key_for(account_id, token), row.password_enc).decode("utf-8")
 
 
 def delete_password(db: Session, account: Account, connection_id: int) -> bool:

@@ -338,7 +338,8 @@ class SshSession:
         self.account_id = account.id
         self.account_name = account.name
         self.account_role = account.role
-        #: The browser session's token; the terminal ends when that session does.
+        #: The browser session's token; the terminal ends when that session does, and the vault it reads keys
+        #: and passwords from is the one open in that session. A browser taking the session over brings its own.
         self.session_token: str | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self.target = target
@@ -576,7 +577,7 @@ class SshSession:
         self, target: Target, tunnel: asyncssh.SSHClientConnection | None
     ) -> tuple[asyncssh.SSHClientConnection, _Attempt]:
         """Host key first, then credentials, then the connection; a refused password starts over with a new one."""
-        if target.auth in (AUTH_KEY, AUTH_PASSWORD) and not vault.is_open(self.account_id):
+        if target.auth in (AUTH_KEY, AUTH_PASSWORD) and not vault.is_open(self.account_id, self.session_token):
             raise SessionEnded(END_FAILED, DETAIL_VAULT)
         with SessionLocal() as db:
             known = hostkeys.stored(db, target.host, target.port) is not None
@@ -740,7 +741,13 @@ class SshSession:
             with SessionLocal() as db:
                 try:
                     stored = vault.get_password(
-                        db, self.account_id, target.connection_id, host=target.host, port=target.port, user=target.user
+                        db,
+                        self.account_id,
+                        self.session_token,
+                        target.connection_id,
+                        host=target.host,
+                        port=target.port,
+                        user=target.user,
                     )
                 except vault.VaultLocked as error:
                     raise SessionEnded(END_FAILED, DETAIL_VAULT) from error
@@ -754,7 +761,7 @@ class SshSession:
             "host": target.host,
             "retry": refused != "",
             "stored_failed": refused == "stored",
-            "can_store": target.connection_id is not None and vault.is_open(self.account_id),
+            "can_store": target.connection_id is not None and vault.is_open(self.account_id, self.session_token),
         }
         answer = await self._ask(question, "password")
         value = answer.get("value")
@@ -771,7 +778,7 @@ class SshSession:
             raise SessionEnded(END_FAILED, DETAIL_KEY_NOT_FOUND)
         with SessionLocal() as db:
             try:
-                row, text = vault.private_key_text(db, self.account_id, target.key_id)
+                row, text = vault.private_key_text(db, self.account_id, self.session_token, target.key_id)
             except vault.VaultLocked as error:
                 raise SessionEnded(END_FAILED, DETAIL_VAULT) from error
             except LookupError as error:
@@ -807,7 +814,14 @@ class SshSession:
                 return
             try:
                 vault.set_password(
-                    db, account, target.connection_id, password, host=target.host, port=target.port, user=target.user
+                    db,
+                    account,
+                    self.session_token,
+                    target.connection_id,
+                    password,
+                    host=target.host,
+                    port=target.port,
+                    user=target.user,
                 )
             except vault.VaultLocked:
                 logger.info("Password not stored, vault locked account=%s connection_id=%s", self.account_name,

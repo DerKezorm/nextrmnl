@@ -140,7 +140,9 @@ open with the account's password only. Both go into the backup archive.
 - With a second factor, the password alone opens nothing: the vault key waits in memory for the code, at most
   five minutes and five tries. A code counts once; the seed is stored encrypted, recovery codes as hashes.
 - The vault key is wrapped with Argon2id and AES-256-GCM; entries are AES-256-GCM. An open vault is its key in
-  the server's memory, forgotten after 30 minutes without use (configurable) and on every restart.
+  the server's memory, forgotten after 30 minutes without use (configurable), on signing out and on every
+  restart. It is open in one browser session only: another browser of the same account, or a sign-in through a
+  provider, opens it with the password itself.
 - Every changing request needs the header `X-Requested-By: nextrmnl`; WebSockets must come from the same origin.
 - Every password check while signed in (opening the vault, exporting it, changing the password, the second
   factor) counts like a sign-in: wrong answers lock the account. Terminals end with the sign-in they came with.

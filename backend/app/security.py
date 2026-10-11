@@ -7,6 +7,7 @@ import secrets
 import threading
 import time
 from datetime import timedelta
+from typing import Any
 
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
@@ -97,15 +98,19 @@ def session_account(db: Session, token: str | None) -> Account | None:
     if session.expires_at <= now:
         db.delete(session)
         db.commit()
+        _lock_vaults([session.token_hash])
         return None
     account = db.get(Account, session.account_id)
     if account is None:
         return None
     if account.expired:
         # A guest account ran out: every browser of it is signed out, and its terminals notice within half a
-        # minute (``ssh._watch_auth``).
+        # minute (``ssh._watch_auth``). Its vault closes in all of them now, not one by one.
         db.delete(session)
         db.commit()
+        from .services import vault
+
+        vault.lock(account.id)
         return None
     # Only every few minutes: the frontend asks often.
     if (now - session.last_seen_at).total_seconds() > 300:
@@ -115,24 +120,36 @@ def session_account(db: Session, token: str | None) -> Account | None:
     return account
 
 
+def _lock_vaults(token_hashes: list[str]) -> None:
+    """A browser session that ends takes its open vault with it."""
+    from .services import vault
+
+    vault.lock_sessions(token_hashes)
+
+
+def _end(db: Session, *conditions: Any) -> int:
+    ended = list(db.scalars(select(AuthSession.token_hash).where(*conditions)))
+    if ended:
+        db.execute(delete(AuthSession).where(AuthSession.token_hash.in_(ended)))
+    db.commit()
+    _lock_vaults(ended)
+    return len(ended)
+
+
 def end_session(db: Session, token: str | None) -> None:
     if token:
-        db.execute(delete(AuthSession).where(AuthSession.token_hash == hash_token(token)))
-        db.commit()
+        _end(db, AuthSession.token_hash == hash_token(token))
 
 
 def end_all_sessions(db: Session, account_id: int, except_token: str | None = None) -> None:
-    statement = delete(AuthSession).where(AuthSession.account_id == account_id)
+    conditions = [AuthSession.account_id == account_id]
     if except_token:
-        statement = statement.where(AuthSession.token_hash != hash_token(except_token))
-    db.execute(statement)
-    db.commit()
+        conditions.append(AuthSession.token_hash != hash_token(except_token))
+    _end(db, *conditions)
 
 
 def purge_sessions(db: Session) -> int:
-    result = db.execute(delete(AuthSession).where(AuthSession.expires_at <= utcnow()))
-    db.commit()
-    return result.rowcount or 0
+    return _end(db, AuthSession.expires_at <= utcnow())
 
 
 class Brake:

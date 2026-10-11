@@ -136,7 +136,7 @@ def account_view(db: DbSession, account: Account, token: str | None = None) -> d
         "oidc_links": oidc_store.link_count(db, account.id),
         #: Providers the operator unlinked it from, until the account says it saw it.
         "oidc_unlinked": oidc_store.unlinked_notices(account),
-        "vault": "unset" if not account.vault_ready else ("open" if vault.is_open(account.id) else "locked"),
+        "vault": "unset" if not account.vault_ready else ("open" if vault.is_open(account.id, token) else "locked"),
         "prefs": account.prefs or {},
         "created_at": account.created_at.isoformat(),
         "last_seen_at": account.last_seen_at.isoformat() if account.last_seen_at else None,
@@ -144,10 +144,27 @@ def account_view(db: DbSession, account: Account, token: str | None = None) -> d
     }
 
 
-def sign_in_response(db: DbSession, request: Request, response: Response, account: Account) -> dict[str, Any]:
+def sign_in_response(
+    db: DbSession, request: Request, response: Response, account: Account, *, vault_key: bytes | None = None
+) -> dict[str, Any]:
+    """Starts the browser session. ``vault_key``: unwrapped from the password given for this sign-in; the vault
+    opens in this session and in no other."""
     token = start_session(db, account, client_ip(request), request.headers.get("user-agent", ""))
+    if vault_key is not None and account.vault_ready:
+        vault.open_with_key(account, token, vault_key, int(settings_service.get(db, "vault_lock_minutes")))
     _set_cookie(response, request, token)
-    return account_view(db, account)
+    return account_view(db, account, token)
+
+
+def password_vault_key(account: Account, password: str) -> bytes | None:
+    """The vault key while the password is at hand, or None: no vault yet, or it does not open with this password
+    (then the vault stays locked and asks later)."""
+    if not account.vault_ready:
+        return None
+    try:
+        return vault.unwrap_key(account, password)
+    except Exception:  # noqa: BLE001
+        return None
 
 
 @router.get("/setup", summary="Does nextrmnl still need its first account?")
@@ -163,8 +180,7 @@ def setup(payload: SetupIn, request: Request, response: Response, db: DbSession)
         account = accounts.create_operator(db, payload.name, payload.password)
     except AccountError as error:
         raise _raise(error) from error
-    vault.unlock(account, payload.password, int(settings_service.get(db, "vault_lock_minutes")))
-    return sign_in_response(db, request, response, account)
+    return sign_in_response(db, request, response, account, vault_key=password_vault_key(account, payload.password))
 
 
 @router.post("/auth/login", summary="Sign in with name and password")
@@ -193,23 +209,14 @@ def login(payload: LoginIn, request: Request, response: Response, db: DbSession)
     if totp.has_second_factor(db, account):
         # Nothing opens yet. The vault key is unwrapped now, while the password is at hand, and parked until the
         # code step; the browser gets a short-lived cookie that names the parked sign-in and nothing else.
-        vault_key: bytes | None = None
-        if account.vault_ready:
-            try:
-                vault_key = vault.unwrap_key(account, payload.password)
-            except Exception:  # noqa: BLE001
-                vault_key = None
-        _set_pending_cookie(response, request, totp.start_pending(account.id, vault_key))
+        _set_pending_cookie(
+            response, request, totp.start_pending(account.id, password_vault_key(account, payload.password))
+        )
         logger.info("Password accepted, second factor pending account=%s", account.name)
         return {"second_factor": True, "methods": totp.methods(db, account)}
     accounts.note_success(db, account)
-    # The password was just given, so the vault opens along with the session.
-    if account.vault_ready:
-        try:
-            vault.unlock(account, payload.password, int(settings_service.get(db, "vault_lock_minutes")))
-        except Exception:  # noqa: BLE001
-            vault.lock(account.id)
-    return sign_in_response(db, request, response, account)
+    # The password was just given, so the vault opens along with the session, in this browser only.
+    return sign_in_response(db, request, response, account, vault_key=password_vault_key(account, payload.password))
 
 
 def end_ssh_sessions(account_id: int, detail: str) -> None:
@@ -230,9 +237,9 @@ def logout(request: Request, response: Response, db: DbSession) -> None:
         from ..security import session_account
 
         account = session_account(db, token)
+    # Ending the session locks its vault; other browsers of the account keep theirs.
     end_session(db, token)
     if account is not None:
-        vault.lock(account.id)
         end_ssh_sessions(account.id, "signed_out")
     response.delete_cookie(SESSION_COOKIE, path="/")
 
@@ -286,11 +293,11 @@ def change_password(payload: PasswordChangeIn, request: Request, account: Curren
             reauth_failed(request, db, account)
         raise _raise(error) from error
     reauth_succeeded(request, db, account)
-    # Other browsers must sign in again; this one stays. Their terminals end with them.
-    end_all_sessions(db, account.id, except_token=request.cookies.get(SESSION_COOKIE))
+    # Other browsers must sign in again; this one stays. Their terminals and open vaults end with them.
+    token = request.cookies.get(SESSION_COOKIE)
+    end_all_sessions(db, account.id, except_token=token)
     end_ssh_sessions(account.id, "signed_out")
-    vault.lock(account.id)
-    vault.unlock(account, payload.new, int(settings_service.get(db, "vault_lock_minutes")))
+    vault.unlock(account, token, payload.new, int(settings_service.get(db, "vault_lock_minutes")))
 
 
 @router.put("/me/prefs", summary="Terminal and clipboard preferences of the own account")
@@ -454,5 +461,4 @@ def accept_invite(
         account = accounts.accept_invite(db, token, payload.name, payload.password)
     except AccountError as error:
         raise _raise(error) from error
-    vault.unlock(account, payload.password, int(settings_service.get(db, "vault_lock_minutes")))
-    return sign_in_response(db, request, response, account)
+    return sign_in_response(db, request, response, account, vault_key=password_vault_key(account, payload.password))

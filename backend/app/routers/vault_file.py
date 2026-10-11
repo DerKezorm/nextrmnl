@@ -9,7 +9,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, File, Form, Request, Response, UploadFile
 from pydantic import BaseModel, Field
 
-from ..deps import CurrentAccount, DbSession, reauth_failed, reauth_guard, reauth_succeeded
+from ..deps import CurrentAccount, DbSession, SessionToken, reauth_failed, reauth_guard, reauth_succeeded
 from ..meldungen import fehler
 from ..services import settings_service, vault, vault_file
 
@@ -40,10 +40,12 @@ def _server(db: DbSession, request: Request) -> str:
 
 
 @router.post("/export", summary="Download the own vault as an encrypted file; asks for the vault password again")
-def export_vault(payload: ExportIn, request: Request, account: CurrentAccount, db: DbSession) -> Response:
+def export_vault(
+    payload: ExportIn, request: Request, account: CurrentAccount, token: SessionToken, db: DbSession
+) -> Response:
     reauth_guard(request, account)
     try:
-        data = vault_file.export(db, account, payload.password, _server(db, request))
+        data = vault_file.export(db, account, token, payload.password, _server(db, request))
     except vault_file.VaultFileError as exc:
         if exc.code == "wrong_password":
             reauth_failed(request, db, account)
@@ -80,18 +82,19 @@ async def import_vault_file(
     file: Annotated[UploadFile, File()],
     password: Annotated[str, Form()],
     account: CurrentAccount,
+    token: SessionToken,
     db: DbSession,
     mode: Annotated[str, Form()] = vault_file.MERGE,
 ) -> dict[str, Any]:
     if mode not in vault_file.MODES:
         raise fehler("invalid_mode", "Choose merge or replace.", 422)
-    if not vault.is_open(account.id):
+    if not vault.is_open(account.id, token):
         # Said before the file is opened: the service checks again when it writes.
         raise fehler("vault_locked", "The vault is locked. Enter your password to open it.", 423)
     raw = await _read_upload(file)
     try:
         _header, payload = vault_file.read(raw, password)
-        result = vault_file.import_(db, account, payload, mode)
+        result = vault_file.import_(db, account, token, payload, mode)
     except vault_file.VaultFileError as exc:
         raise _failed(exc) from exc
     return {

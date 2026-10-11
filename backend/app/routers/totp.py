@@ -25,7 +25,7 @@ from ..deps import (
 from ..meldungen import fehler, meldung
 from ..models import SIGN_IN_PASSWORD, Account
 from ..security import SESSION_COOKIE, brake, end_all_sessions
-from ..services import accounts, notify, passkeys, settings_service, totp, vault
+from ..services import accounts, notify, passkeys, totp, vault
 from .auth import PENDING_COOKIE, account_view, end_ssh_sessions, sign_in_response
 
 logger = logging.getLogger("nextrmnl.auth")
@@ -223,14 +223,12 @@ def login_code(payload: CodeIn, request: Request, response: Response, db: DbSess
     accounts.note_success(db, account)
     totp.finish_pending(token)
     _clear_pending_cookie(response)
-    if pending.vault_key is not None and account.vault_ready:
-        vault.open_with_key(account, pending.vault_key, int(settings_service.get(db, "vault_lock_minutes")))
     if used_recovery:
         left = len(totp.load_recovery(account.totp_recovery))
         logger.warning("Recovery code used account=%s remaining=%s", account.name, left)
     else:
         logger.info("Second factor passed account=%s", account.name)
-    return sign_in_response(db, request, response, account)
+    return sign_in_response(db, request, response, account, vault_key=pending.vault_key)
 
 
 @router.post("/auth/login/totp/cancel", status_code=204, summary="Give up the second step and start over")

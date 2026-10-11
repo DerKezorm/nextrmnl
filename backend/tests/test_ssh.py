@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 
 from app.db import SessionLocal
 from app.services import hostkeys
-from tests.conftest import UI
+from tests.conftest import UI, session_token
 from tests.helpers_sshd import (
     PASSWORD,
     USER,
@@ -158,7 +158,7 @@ def test_ask_password_and_store_it(client: TestClient, operator: dict, sshd: Ssh
     with SessionLocal() as db:
         from app.services import vault
 
-        assert vault.get_password(db, operator["id"], cid) == PASSWORD
+        assert vault.get_password(db, operator["id"], session_token(client), cid) == PASSWORD
 
 
 def test_wrong_password_three_times_fails(client: TestClient, operator: dict, sshd: Sshd) -> None:

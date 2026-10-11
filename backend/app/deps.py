@@ -156,7 +156,13 @@ def operator_account(account: Annotated[Account, Depends(current_account)]) -> A
     return account
 
 
+def session_token(request: Request) -> str | None:
+    """The token of the browser session behind the request; the vault is open per browser session."""
+    return request.cookies.get(SESSION_COOKIE)
+
+
 CurrentAccount = Annotated[Account, Depends(current_account)]
+SessionToken = Annotated[str | None, Depends(session_token)]
 OperatorAccount = Annotated[Account, Depends(operator_account)]
 
 

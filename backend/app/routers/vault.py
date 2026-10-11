@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from .. import crypto
-from ..deps import CurrentAccount, DbSession, reauth_failed, reauth_guard, reauth_succeeded
+from ..deps import CurrentAccount, DbSession, SessionToken, reauth_failed, reauth_guard, reauth_succeeded
 from ..meldungen import fehler
 from ..models import KEY_TYPES, SIGN_IN_OIDC, Connection, VaultKey, VaultPassword
 from ..security import MIN_PASSWORD
@@ -62,17 +62,21 @@ def password_view(row: VaultPassword) -> dict[str, Any]:
 
 
 @router.get("", summary="State of the own vault")
-def state(account: CurrentAccount) -> dict[str, Any]:
-    return {"state": "unset" if not account.vault_ready else ("open" if vault.is_open(account.id) else "locked")}
+def state(account: CurrentAccount, token: SessionToken) -> dict[str, Any]:
+    return {
+        "state": "unset" if not account.vault_ready else ("open" if vault.is_open(account.id, token) else "locked")
+    }
 
 
 @router.post("/unlock", summary="Open the vault with the account's password")
-def unlock(payload: PasswordIn, request: Request, account: CurrentAccount, db: DbSession) -> dict[str, Any]:
+def unlock(
+    payload: PasswordIn, request: Request, account: CurrentAccount, token: SessionToken, db: DbSession
+) -> dict[str, Any]:
     if not account.vault_ready:
         raise fehler("vault_not_set_up", "This account has no vault yet.", 409)
     reauth_guard(request, account)
     try:
-        vault.unlock(account, payload.password, int(settings_service.get(db, "vault_lock_minutes")))
+        vault.unlock(account, token, payload.password, int(settings_service.get(db, "vault_lock_minutes")))
     except crypto.WrongPassword as error:
         reauth_failed(request, db, account)
         raise fehler("wrong_password", "The password is wrong.", 401) from error
@@ -80,14 +84,14 @@ def unlock(payload: PasswordIn, request: Request, account: CurrentAccount, db: D
     return {"state": "open"}
 
 
-@router.post("/lock", summary="Lock the vault now")
-def lock(account: CurrentAccount) -> dict[str, Any]:
-    vault.lock(account.id)
+@router.post("/lock", summary="Lock the vault now, in this browser session")
+def lock(account: CurrentAccount, token: SessionToken) -> dict[str, Any]:
+    vault.lock_session(token)
     return {"state": "locked"}
 
 
 @router.post("/setup", summary="OIDC accounts: choose the vault password")
-def set_up(payload: PasswordIn, account: CurrentAccount, db: DbSession) -> dict[str, Any]:
+def set_up(payload: PasswordIn, account: CurrentAccount, token: SessionToken, db: DbSession) -> dict[str, Any]:
     if account.vault_ready:
         raise fehler("vault_exists", "This account already has a vault.", 409)
     if account.sign_in != SIGN_IN_OIDC:
@@ -95,7 +99,7 @@ def set_up(payload: PasswordIn, account: CurrentAccount, db: DbSession) -> dict[
     if len(payload.password) < MIN_PASSWORD:
         raise fehler("password_too_short", f"Use at least {MIN_PASSWORD} characters.", 422, minimum=MIN_PASSWORD)
     vault.set_up(db, account, payload.password)
-    vault.unlock(account, payload.password, int(settings_service.get(db, "vault_lock_minutes")))
+    vault.unlock(account, token, payload.password, int(settings_service.get(db, "vault_lock_minutes")))
     return {"state": "open"}
 
 
@@ -106,7 +110,7 @@ class VaultPasswordChangeIn(BaseModel):
 
 @router.put("/password", status_code=204, summary="OIDC accounts: change the vault password")
 def change_vault_password(
-    payload: VaultPasswordChangeIn, request: Request, account: CurrentAccount, db: DbSession
+    payload: VaultPasswordChangeIn, request: Request, account: CurrentAccount, token: SessionToken, db: DbSession
 ) -> None:
     if account.sign_in != SIGN_IN_OIDC:
         raise fehler("password_account", "Change the account password instead; it is the vault password.", 409)
@@ -119,17 +123,19 @@ def change_vault_password(
         reauth_failed(request, db, account)
         raise fehler("wrong_password", "The password is wrong.", 401) from error
     reauth_succeeded(request, db, account)
+    # The key stays the same, but whoever opened the vault with the old password elsewhere gives the new one now.
+    vault.lock_others(account.id, token)
 
 
 @router.post("/reset", summary="Forgot the vault password: start over with an empty vault")
-def reset(payload: PasswordIn, account: CurrentAccount, db: DbSession) -> dict[str, Any]:
+def reset(payload: PasswordIn, account: CurrentAccount, token: SessionToken, db: DbSession) -> dict[str, Any]:
     """Only for OIDC accounts; password accounts change their password, which rewraps the vault."""
     if account.sign_in != SIGN_IN_OIDC:
         raise fehler("password_account", "Password accounts reset the vault by changing the password.", 409)
     if len(payload.password) < MIN_PASSWORD:
         raise fehler("password_too_short", f"Use at least {MIN_PASSWORD} characters.", 422, minimum=MIN_PASSWORD)
     vault.reset(db, account, payload.password)
-    vault.unlock(account, payload.password, int(settings_service.get(db, "vault_lock_minutes")))
+    vault.unlock(account, token, payload.password, int(settings_service.get(db, "vault_lock_minutes")))
     return {"state": "open"}
 
 
@@ -159,26 +165,26 @@ def _name_free(db: DbSession, account_id: int, name: str) -> None:
 
 
 @router.post("/keys/generate", status_code=201, summary="Generate a key pair in the vault")
-def generate(payload: GenerateIn, account: CurrentAccount, db: DbSession) -> dict[str, Any]:
+def generate(payload: GenerateIn, account: CurrentAccount, token: SessionToken, db: DbSession) -> dict[str, Any]:
     if payload.key_type not in KEY_TYPES:
         raise fehler("invalid_key_type", "Unknown key type.", 422)
     name = payload.name.strip()
     _name_free(db, account.id, name)
-    if not vault.is_open(account.id):
+    if not vault.is_open(account.id, token):
         raise locked()
     text, parsed = vault.generate_key(payload.key_type, payload.passphrase or None, comment=f"{name}@nextrmnl")
     try:
-        row = vault.add_key(db, account, name, text, parsed)
+        row = vault.add_key(db, account, token, name, text, parsed)
     except vault.VaultLocked as error:
         raise locked() from error
     return key_view(row)
 
 
 @router.post("/keys/import", status_code=201, summary="Store an existing private key in the vault")
-def import_key(payload: ImportIn, account: CurrentAccount, db: DbSession) -> dict[str, Any]:
+def import_key(payload: ImportIn, account: CurrentAccount, token: SessionToken, db: DbSession) -> dict[str, Any]:
     name = payload.name.strip()
     _name_free(db, account.id, name)
-    if not vault.is_open(account.id):
+    if not vault.is_open(account.id, token):
         raise locked()
     text = payload.private_key.strip() + "\n"
     try:
@@ -190,7 +196,7 @@ def import_key(payload: ImportIn, account: CurrentAccount, db: DbSession) -> dic
         # the key is stored as it is, protected, and the passphrase is asked for on every connection.
         raise fehler("passphrase_needed", "This key is protected. Enter its passphrase so nextrmnl can read it.", 422)
     try:
-        row = vault.add_key(db, account, name, text, parsed)
+        row = vault.add_key(db, account, token, name, text, parsed)
     except vault.VaultLocked as error:
         raise locked() from error
     return key_view(row)
@@ -214,7 +220,7 @@ def list_passwords(account: CurrentAccount, db: DbSession) -> list[dict[str, Any
 
 @router.put("/passwords/{connection_id}", summary="Store the password for a connection")
 def store_password(
-    connection_id: int, payload: StoredPasswordIn, account: CurrentAccount, db: DbSession
+    connection_id: int, payload: StoredPasswordIn, account: CurrentAccount, token: SessionToken, db: DbSession
 ) -> dict[str, Any]:
     # Only a connection the account can see: otherwise the export would tell a member where everybody else
     # connects, name, host and user, by storing a password for every id there is.
@@ -223,7 +229,14 @@ def store_password(
     user = share.user if share is not None and share.user else connection.user
     try:
         row = vault.set_password(
-            db, account, connection_id, payload.password, host=connection.host, port=connection.port, user=user
+            db,
+            account,
+            token,
+            connection_id,
+            payload.password,
+            host=connection.host,
+            port=connection.port,
+            user=user,
         )
     except vault.VaultLocked as error:
         raise locked() from error

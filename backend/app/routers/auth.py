@@ -20,6 +20,7 @@ from ..deps import (
     reauth_failed,
     reauth_guard,
     reauth_succeeded,
+    request_base,
 )
 from ..meldungen import fehler, meldung
 from ..models import ROLES, SIGN_IN_PASSWORD, Account
@@ -426,7 +427,7 @@ def create_invite(payload: InviteIn, request: Request, operator: OperatorAccount
         invite, token = accounts.create_invite(db, operator, payload.name, payload.role, payload.account_expires_at)
     except AccountError as error:
         raise _raise(error) from error
-    base = settings_service.public_url(db) or str(request.base_url).rstrip("/")
+    base = settings_service.public_url(db) or request_base(request).rstrip("/")
     return {
         "id": invite.id,
         "name": invite.name,

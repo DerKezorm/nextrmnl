@@ -413,6 +413,47 @@ def test_the_authentik_card_sees_the_scheme_a_trusted_proxy_tells(
     assert stranger["seen"] == "http://rmnl.example.com" and stranger["proxy_ignored"] is True
 
 
+def test_links_without_a_public_address_take_the_scheme_a_trusted_proxy_tells(
+    client: TestClient, operator: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The invitation link and the dashboard's connection links fall back to the request's address when no public
+    address is set: behind a trusted TLS proxy that is https, from anybody else the header counts for nothing."""
+    monkeypatch.setattr(get_settings(), "trusted_proxies", "203.0.113.0/24")
+    assert client.put("/api/settings", json={"api_keys_allowed": True}, headers=UI).status_code == 200
+    key = client.post("/api/api-keys", json={"name": "nexdeck"}, headers=UI).json()["key"]
+    made = client.post(
+        "/api/connections",
+        json={"name": "nas", "host": "10.0.0.5", "port": 22, "user": "root", "auth": "password"},
+        headers=UI,
+    )
+    assert made.status_code == 201, made.text
+
+    async def probe(host: str, port: int) -> tuple[str, int | None]:
+        return "up", 3
+
+    from app.routers import api_v1, connections
+
+    monkeypatch.setattr(connections, "_probe", probe)
+
+    def links_through(peer: str) -> tuple[str, str]:
+        browser = TestClient(app, base_url="http://rmnl.example.com", client=(peer, 50000), headers=UI)
+        sign_in(browser, "admin")
+        proto = {"X-Forwarded-Proto": "https"}
+        invite = browser.post("/api/accounts/invites", json={"name": f"sam{peer[-1]}", "role": "member"}, headers=proto)
+        assert invite.status_code == 201, invite.text
+        api_v1._reach_cache.clear()
+        listed = browser.get("/api/v1/connections", headers={"Authorization": f"Bearer {key}", **proto})
+        assert listed.status_code == 200, listed.text
+        return invite.json()["link"], listed.json()[0]["link"]
+
+    invite, connection = links_through("203.0.113.5")
+    assert invite.startswith("https://rmnl.example.com/invite/")
+    assert connection == f"https://rmnl.example.com/connect/{made.json()['id']}"
+    invite, connection = links_through("198.51.100.7")
+    assert invite.startswith("http://rmnl.example.com/invite/")
+    assert connection == f"http://rmnl.example.com/connect/{made.json()['id']}"
+
+
 
 # --- Emptying the public address asks as well -------------------------------------------------------------------------
 

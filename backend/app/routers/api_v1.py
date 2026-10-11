@@ -20,7 +20,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy import func, select
 
 from .. import __version__
-from ..deps import DbSession, client_ip
+from ..deps import DbSession, client_ip, request_base
 from ..meldungen import fehler
 from ..models import END_FAILED, Account, Connection, SessionRecord
 from ..services import api_keys, settings_service, ssh, updates
@@ -108,7 +108,7 @@ def history(account: KeyAccount, db: DbSession, limit: int = Query(default=20, g
 async def connection_list(account: KeyAccount, db: DbSession, request: Request) -> list[dict[str, Any]]:
     """``link`` opens nextrmnl at the connection; it asks before connecting, and only shows it to an account that
     sees the connection."""
-    base = settings_service.public_url(db) or str(request.base_url).rstrip("/")
+    base = settings_service.public_url(db) or request_base(request).rstrip("/")
     now = time.monotonic()
     cached = _reach_cache.get(account.id)
     if cached is None or now - cached[0] >= REACH_SECONDS:

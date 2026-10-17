@@ -1,7 +1,5 @@
 .git
 .gitignore
-.claude
-CLAUDE.md
 data
 data-*
 pruefung

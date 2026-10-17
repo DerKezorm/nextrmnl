@@ -1,6 +1,6 @@
 /**
- * Settings, Sign-in (operator only): three cards one below the other, as the shared sign-in blueprint lays them out
- * for every nex app (part 04). Order, wording and behaviour come from there; the parts (section, switch, field,
+ * Settings, Sign-in (operator only): three cards one below the other, as in every nex app.
+ * Order, wording and behaviour are the same in all of them; the parts (section, switch, field,
  * button, dialog) are nextrmnl's own.
  *
  * 1. Sign-in: password sign-in (locked on while no provider is active), the public address, the second factor.
@@ -41,7 +41,7 @@ function addressQuestionOf(error: unknown): AddressQuestion | null {
   return { count: Number(data.count ?? 0), hand: Number(data.hand ?? 0), address: String(data.address ?? '') }
 }
 
-/** The sentences of that question: `count` entries of the button, `hand` entries by hand (blueprint 04, card 1). */
+/** The sentences of that question: `count` entries of the button, `hand` entries by hand. */
 function addressQuestionText(t: TFunction, question: AddressQuestion): string {
   return [
     question.count > 0 ? t('oidc.admin.addressChangeConfirm', { address: question.address }) : '',
@@ -125,7 +125,7 @@ function SignInCard({
   const [address, setAddress] = useState(settings.public_url)
   const [addressError, setAddressError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-  // The address changes what a provider has registered: ask first (blueprint 04, card 1), save only when confirmed.
+  // The address changes what a provider has registered: ask first, save only when confirmed.
   const [asking, setAsking] = useState<AddressQuestion | null>(null)
 
   // The switch moves at once; the server's answer confirms it, a refusal puts it back.
@@ -377,7 +377,7 @@ const EMPTY: OidcProviderForm = {
 
 type FieldName = 'label' | 'slug' | 'issuer' | 'client_id' | 'client_secret' | 'scopes' | 'id'
 
-/** The provider form as a dialog, fields in the blueprint's order. */
+/** The provider form as a dialog, fields in the shared order. */
 function ProviderDialog({
   entry,
   publicUrl,
@@ -611,7 +611,7 @@ function AuthentikCard({
   const [running, setRunning] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [askIssuer, setAskIssuer] = useState<number | null>(null)
-  // "Use it only" asks too when the address changes what authentik knows (blueprint 04, cards 1 and 3).
+  // "Use it only" asks too when the address changes what authentik knows.
   const [askAddress, setAskAddress] = useState<AddressQuestion | null>(null)
   const [unusable, setUnusable] = useState(false)
   const [address, setAddress] = useState<AuthentikAddress | null>(null)

@@ -1,7 +1,7 @@
 """nextrmnl's side of the shared sign-in module ``vendor/nexoidc``: the ``Store`` over its tables, the start-up
 configuration, and the migration from the single provider of the settings to the list.
 
-The module (the shared blueprint "Anmeldung mit OIDC und authentik", the same in every nex app) runs the protocol,
+The module (the same in every nex app) runs the protocol,
 decides who an identity is and keeps the provider list; it never sees a database. What is nextrmnl's own lives here:
 accounts and their names, guest accounts that ran out, the role and end an invitation brings, the address an account
 through a provider follows, and the encryption of the client secrets with ``secret.key``.
@@ -432,7 +432,7 @@ def note_unlinked(account: Account, label: str) -> None:
     account.oidc_unlinked = json.dumps([*names, label][-20:])
 
 
-# --- The migration from the single provider of the settings (blueprint 01 "Umstieg", 06 "Wanderung") --------------
+# --- The migration from the single provider of the settings -----------------------------------------------------
 
 #: Set once the settings were looked at: an operator who later removes every entry must not get the old provider
 #: back at the next start.
@@ -440,9 +440,9 @@ MIGRATED = "oidc_list_migrated"
 #: What the way back wrote last, as the module sums it up (``migrate.fingerprint``): the next start takes over what
 #: the version before the list changed since, and nothing else.
 FINGERPRINT = "oidc_legacy_fingerprint"
-#: The version before the list asked no code of its own after the provider (blueprint 06 "Wanderung").
+#: The version before the list asked no code of its own after the provider.
 TRUSTED_BEFORE = True
-#: The issuer the version before the list knows, as it wrote it, or ``migrate.CLOSED`` (blueprint 01 "Umstieg" 4):
+#: The issuer the version before the list knows, as it wrote it, or ``migrate.CLOSED``:
 #: ``migrate.way_back`` decides from it and the entry ``oidc`` what the old settings show. The app stores it and
 #: never reads into it.
 ANCHOR = "oidc_legacy_anchor"
@@ -478,7 +478,7 @@ def legacy_plan(db: Session) -> migrate.Plan | None:
 
 
 def mirror_legacy(db: Session) -> None:
-    """The way back to nextrmnl 0.4 (blueprint 01 "Umstieg" 4), inside every commit that changes accounts, links or
+    """The way back to nextrmnl 0.4, inside every commit that changes accounts, links or
     the entry: that version reads the old settings ``oidc_*`` and the column ``oidc_subject``, so they must always
     show what ``migrate.way_back`` gives for the entry ``oidc`` and the stored anchor (one rule for every app, see the
     module). Otherwise going back would bring a removed provider back, or let a subject into an account that gave it

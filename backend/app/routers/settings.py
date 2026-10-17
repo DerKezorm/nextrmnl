@@ -87,13 +87,13 @@ def write(payload: SettingsIn, operator: OperatorAccount, db: DbSession, request
         if not url:
             raise fehler("notify_url_missing", "Enter the address of the inbox first.", 422)
     if values.get("password_login") is False and not oidc_store.any_active(db):
-        # Without an active provider nobody but the operator could come in any more (shared blueprint 01).
+        # Without an active provider nobody but the operator could come in any more.
         raise fehler("provider_first", "Set up a sign-in provider before turning sign-in with a password off.", 409)
     if values.get("update_check") is False:
         updates.forget()
     if "public_url" in values:
         # The address is what authentik and every other provider has registered a return address under: ask
-        # before it changes (the shared blueprint 04, card 1), and save nothing until the operator says yes.
+        # before it changes, and save nothing until the operator says yes.
         try:
             question = authentik.public_url_guard(
                 oidc_store.SqlStore(db), values["public_url"], request_base(request), confirm=confirmed

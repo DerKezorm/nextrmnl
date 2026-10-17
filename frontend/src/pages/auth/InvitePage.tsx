@@ -16,7 +16,7 @@ export function InvitePage() {
   const { token = '' } = useParams()
   const { acceptInvite } = useAuth()
   const invite = useLoad(() => api.get<{ name: string; role: string }>(`/api/invites/${encodeURIComponent(token)}`), [token])
-  // "Continue with …": the invitation travels along to the provider (shared sign-in blueprint, part 04).
+  // "Continue with …": the invitation travels along to the provider (shared sign-in module).
   const providers = useLoad(() => api.get<OidcButton[]>('/api/oidc/providers').catch(() => [] as OidcButton[]))
 
   return (

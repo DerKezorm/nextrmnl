@@ -1,5 +1,5 @@
 /**
- * Pflichttests 33 and 34 of the shared sign-in blueprint (copied once from bauplaene/oidc, then nextrmnl's file).
+ * Contract tests 33 and 34 of the shared sign-in module (copied once, then nextrmnl's file).
  *
  * The provider is the stand-in authentik of e2e/fake-authentik.mjs (its API for the authentik button, and an OpenID
  * Connect provider over http on 8477 with a key made at its start, sending the browser straight back with a code for
@@ -55,7 +55,7 @@ test('33: sign-in through the provider button ends in a session', async ({ page,
   await other.waitForURL((url) => url.pathname === '/connect/7')
   await expect(other).not.toHaveURL(/error=/)
   expect((await (await other.request.get('/api/auth/me')).json()).name).toBe(OPERATOR.name)
-  // Somebody the provider knows and nextrmnl does not: refused with the blueprint's sentence.
+  // Somebody the provider knows and nextrmnl does not: refused with the module's sentence.
   await person('stranger-33', 'stranger')
   const strangerContext = await browser.newContext({ storageState: { cookies: [], origins: [] }, locale: 'en-US' })
   const stranger = await strangerContext.newPage()

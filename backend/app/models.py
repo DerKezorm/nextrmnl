@@ -127,7 +127,7 @@ class AuthSession(Base):
 
 
 class OidcProvider(Base):
-    """A sign-in provider (OpenID Connect), one row each, with the columns of the shared blueprint. Read and written
+    """A sign-in provider (OpenID Connect), one row each, with the columns of the shared module. Read and written
     only through ``services/oidc_store.py`` for the shared module ``vendor/nexoidc``."""
 
     __tablename__ = "oidc_providers"

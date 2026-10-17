@@ -1,5 +1,5 @@
 /**
- * My account, sign-in providers (shared sign-in blueprint, part 04): one line per active provider with its state and
+ * My account, sign-in providers: one line per active provider with its state and
  * "Link" or "Unlink". Linking asks the own password once more, then the browser goes to the provider and comes back
  * to `/account?linked=<slug>` (the account tab), or with `?error=<code>`.
  */

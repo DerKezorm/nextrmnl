@@ -104,7 +104,7 @@ def _entries() -> list[OidcProvider]:
 
 
 def test_a_client_secret_opens_only_for_its_own_provider() -> None:
-    """Bauplan 01: sealed under ``oidc-provider:<id>``; another provider's ciphertext does not open here, and the
+    """Sealed under ``oidc-provider:<id>``; another provider's ciphertext does not open here, and the
     secrets sealed without a context before (TOTP seeds, the old setting) still open as they did."""
     sealed = crypto.encrypt_secret("client-secret-value", "oidc-provider:1")
     assert crypto.decrypt_secret(sealed, "oidc-provider:1") == "client-secret-value"
@@ -448,7 +448,7 @@ def _terminal_socket_code(browser: TestClient) -> int:
 def test_a_password_account_coming_in_through_a_trusted_provider_is_not_forced_to_set_up_a_second_factor(
     client: TestClient, operator: dict, provider: FakeProvider
 ) -> None:
-    """Blueprint 04, "Zweiten Faktor verlangen" (decided 10.10.2026): the provider has checked it. The same account
+    """"Require the second factor" leaves a session alone when the provider has checked it. The same account
     with its password is held to it as before."""
     add_provider(client, provider)
     make_account("anna")
@@ -805,7 +805,7 @@ def test_no_secret_and_no_invitation_leaves_a_trace_in_the_log(
 def test_the_button_pressed_again_after_the_migration_keeps_the_old_address_the_entry_and_its_links(
     client: TestClient, operator: dict
 ) -> None:
-    """Blueprint 01 "Umstieg" 3: the entry ``oidc`` keeps ``/api/oidc/callback`` when the operator presses the
+    """The entry ``oidc`` keeps ``/api/oidc/callback`` when the operator presses the
     authentik button again; the provider is its own (found by its client id), so no link is dropped."""
     from app.vendor import nexoidc as module
     from tests.oidc_helpers import fakes
@@ -837,7 +837,7 @@ def test_the_button_pressed_again_after_the_migration_keeps_the_old_address_the_
         module.use_transport(None)
 
 
-# --- The way back to 0.4 (blueprint 01 "Umstieg" 4) ----------------------------------------------------------------
+# --- The way back to 0.4 -----------------------------------------------------------------------------------------
 
 
 def _old() -> dict[str, object]:

@@ -1,4 +1,4 @@
-"""nexoidc contract tests: nextrmnl's adapter (copied once from ``bauplaene/oidc/tests-fuer-apps/adapter_template.py``,
+"""nexoidc contract tests: nextrmnl's adapter (started from the module's adapter template,
 from then on nextrmnl's own file).
 
 The contract tests in ``tests/nexoidc/`` are the same in every nex app and never edited here. They reach nextrmnl
@@ -42,7 +42,7 @@ class Adapter(StandardAdapter):
     api = "/api"
     single_account = False
     only_authentik = False
-    #: nextrmnl is no app of the Verbund (Bauplan 06): its list is never coupled to nexsuite.
+    #: nextrmnl's provider list is never coupled to a central directory.
     supports_coupling = False
     has_second_factor = True
     legacy_model = "single"

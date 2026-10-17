@@ -1,7 +1,7 @@
 [tool.ruff]
 target-version = "py313"
 line-length = 120
-# The shared sign-in module and its contract tests come unchanged from bauplaene/oidc and are linted there.
+# The shared sign-in module and its contract tests come unchanged from the shared module and are linted with it.
 extend-exclude = ["app/vendor/nexoidc", "tests/nexoidc"]
 
 [tool.ruff.lint]

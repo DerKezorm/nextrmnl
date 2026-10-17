@@ -1,6 +1,5 @@
 """Behind a reverse proxy: the scheme (https) and the sender's address come from a proxy in
-NEXTRMNL_TRUSTED_PROXIES and from nobody else, as the rule of the shared sign-in module says ("Hinter einem
-Proxy"): rightmost value of the last header line, any case, only http and https, nobody trusted from the start.
+NEXTRMNL_TRUSTED_PROXIES and from nobody else, as the rule of the shared sign-in module says: rightmost value of the last header line, any case, only http and https, nobody trusted from the start.
 What depends on it: the Secure flag of the cookies, the passkey party without a public address, and the brake."""
 
 from __future__ import annotations

@@ -4,8 +4,7 @@ SSH and SFTP in the browser, self-hosted, for the machines in your own network. 
 host keys that are checked and remembered, and a terminal that copies and pastes the way PuTTY and Windows
 Terminal do.
 
-nextrmnl is part of the nex apps and looks like them. The project site with the full tour, in English and German,
-is at [nextrmnl.nexapps.dev](https://nextrmnl.nexapps.dev).
+nextrmnl is part of the nex apps and looks like them.
 
 ## Screenshots
 
@@ -76,7 +75,7 @@ is at [nextrmnl.nexapps.dev](https://nextrmnl.nexapps.dev).
   ZIP that 7-Zip opens without nextrmnl, restore with a preview and a restart.
 - **A log** with four levels (the deep ones switch themselves off), a request id in every line and in every
   error message, downloadable. Never with terminal content, keystrokes, passwords, keys or tokens.
-- **Read-only API keys** for dashboards such as [nexdeck](https://nexdeck.nexapps.dev): four endpoints under
+- **Read-only API keys** for dashboards such as [nexdeck](https://github.com/DerKezorm/nexdeck): four endpoints under
   `/api/v1` (`status`, `sessions`, `history`, `connections`) with the key as `Authorization: Bearer`. Off by
   default; the operator switches them on and creates them under Settings, Security. Each connection carries its
   direct link.

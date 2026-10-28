@@ -1,5 +1,5 @@
 /**
- * Contract tests 33 and 34 of the shared sign-in module (copied once, then nextrmnl's file).
+ * End-to-end tests of the shared sign-in module (copied once, then nextrmnl's file).
  *
  * The provider is the stand-in authentik of e2e/fake-authentik.mjs (its API for the authentik button, and an OpenID
  * Connect provider over http on 8477 with a key made at its start, sending the browser straight back with a code for

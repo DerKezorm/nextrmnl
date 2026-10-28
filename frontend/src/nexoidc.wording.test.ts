@@ -1,7 +1,6 @@
 /**
- * Contract test 35: every text of the oidc module is in the app, in German and English, through the app's
- * own i18n. Copied once from the module; then the
- * app's file. Fill in the places marked APP.
+ * Every text of the oidc module is in the app, in German and English, through the app's own i18n. Copied once
+ * from the module; then the app's file. Fill in the places marked APP.
  *
  * The module's own tests already check the wording files word for word; this test checks that the
  * app really loads them (merged into its resources, `{{app}}` filled in) and that nothing in the app overrides them.
@@ -58,7 +57,7 @@ describe('the oidc texts of an app with several accounts', () => {
   it('leave out the sentences for one account, and pick the plural form by the count', async () => {
     if (!i18n.isInitialized) await startI18n('en')
     await changeLanguage('en')
-    // oidcWording hands on `oidc.single` only to the apps with one account (nexcrate, nexsift).
+    // oidcWording hands on `oidc.single` only to an app with one account.
     expect(i18n.exists('oidc.single.admin.passwordHint')).toBe(false)
     expect(i18n.exists('oidc.admin.passwordHint')).toBe(true)
     expect(i18n.t('oidc.admin.issuerChangeConfirm', { count: 1 })).not.toBe(i18n.t('oidc.admin.issuerChangeConfirm', { count: 2 }))

@@ -6,9 +6,11 @@ import App from './App'
 import { AuthProvider } from './auth'
 import { NoticeProvider } from './components/Notice'
 import { startI18n } from './i18n'
+import { bearTranslatedPages } from './lib/translatedPage'
 import './styles/index.css'
 
 function startApp(): void {
+  bearTranslatedPages()
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
       <BrowserRouter>

@@ -21,10 +21,12 @@ type ButtonProps = ComponentPropsWithRef<'button'> & {
 }
 
 export function Button({ variant = 'primary', size = 'md', loading = false, className = '', children, disabled, ...rest }: ButtonProps) {
+  // The label sits in its own element: when the browser translates the page it swaps text nodes, and React would
+  // no longer find the text the spinner goes in front of. `contents` leaves the layout untouched.
   return (
     <button type="button" className={`${buttonClasses(variant, size)} ${className}`} disabled={disabled || loading} {...rest}>
       {loading && <Spinner />}
-      {children}
+      <span className="contents">{children}</span>
     </button>
   )
 }

@@ -700,7 +700,12 @@
       "vault_locked": "The vault is locked. Open it and reconnect.",
       "access_ended": "The share for this connection ran out or was taken back.",
       "signed_out": "The sign-in behind it ended, and so did the session.",
-      "too_many_attempts": "Too many refused sign-ins in a row. Wait a moment, then connect again."
+      "too_many_attempts": "Too many refused sign-ins in a row. Wait a moment, then connect again.",
+      "bad_target": "Not connected: host or user is missing or not usable.",
+      "connection_not_found": "This connection is gone or no longer shared with you.",
+      "foreign_origin": "nextrmnl refused the terminal: this page came from an address it does not know. Behind a reverse proxy, pass the original Host header or X-Forwarded-Host, or enter this address as the public address (Settings, Sign-in). The log names both addresses.",
+      "socket_failed": "The terminal connection to nextrmnl could not be opened. A reverse proxy in front of nextrmnl has to pass WebSockets.",
+      "too_many_sessions": "Too many open sessions for this account. Close one, then connect again."
     },
     "latency": "{{ms}} ms",
     "reconnectHint": "Enter reconnects.",

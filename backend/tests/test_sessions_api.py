@@ -146,18 +146,33 @@ def test_members_see_only_their_own_sessions(client: TestClient, operator: dict,
 def test_websocket_without_cookie_is_closed_with_4401(client: TestClient, operator: dict, sshd: Sshd) -> None:
     cid = make_connection(client, sshd, "ask")
     anonymous = TestClient(app, base_url="http://testserver")
-    with pytest.raises(WebSocketDisconnect) as refused, anonymous.websocket_connect(ws_url(cid), headers=ORIGIN):
-        pass
+    with pytest.raises(WebSocketDisconnect) as refused, anonymous.websocket_connect(ws_url(cid), headers=ORIGIN) as ws:
+        ws.receive_text()
     assert refused.value.code == 4401
     assert client.get("/api/sessions/history").json() == []
 
 
-def test_websocket_with_foreign_origin_is_refused(client: TestClient, operator: dict, sshd: Sshd) -> None:
+def test_websocket_with_foreign_origin_is_refused(
+    client: TestClient, operator: dict, sshd: Sshd, caplog: pytest.LogCaptureFixture
+) -> None:
     cid = make_connection(client, sshd, "ask")
-    for headers in ({"origin": "http://evil.example.com"}, {}):
-        with pytest.raises(WebSocketDisconnect) as refused, client.websocket_connect(ws_url(cid), headers=headers):
-            pass
-        assert refused.value.code == 4401
+    anonymous = TestClient(app, base_url="http://testserver")
+    # Signed in or not, a foreign page learns the same.
+    for browser in (client, anonymous):
+        for origin in ("http://evil.example.com", None):
+            # A fresh dict each time: the test client writes its own headers into it.
+            headers = {"origin": origin} if origin else {}
+            caplog.clear()
+            with (
+                caplog.at_level(logging.INFO, logger="nextrmnl"),
+                pytest.raises(WebSocketDisconnect) as refused,
+                browser.websocket_connect(ws_url(cid), headers=headers) as ws,
+            ):
+                ws.receive_text()
+            assert refused.value.code == 4403
+            line = next(r.getMessage() for r in caplog.records if "Terminal refused" in r.getMessage())
+            assert "expected=testserver" in line
+            assert ("origin=evil.example.com" if origin else "origin=-") in line
     assert client.get("/api/sessions/history").json() == []
     assert sshd.password_tries == 0
 
@@ -167,14 +182,14 @@ def test_websocket_refuses_invisible_connection_and_bad_quick_params(
 ) -> None:
     member = invite_member(client, "alex")
     cid = make_connection(client, sshd, "ask")
-    with pytest.raises(WebSocketDisconnect) as refused, connect_ws(member, cid):
-        pass
+    with pytest.raises(WebSocketDisconnect) as refused, connect_ws(member, cid) as ws:
+        ws.receive_text()
     assert refused.value.code == 4404
-    with pytest.raises(WebSocketDisconnect) as refused, connect_ws(client, host="127.0.0.1", port=sshd.port):
-        pass
+    with pytest.raises(WebSocketDisconnect) as refused, connect_ws(client, host="127.0.0.1", port=sshd.port) as ws:
+        ws.receive_text()
     assert refused.value.code == 4400
-    with pytest.raises(WebSocketDisconnect) as refused, client.websocket_connect("/api/sessions/ws", headers=ORIGIN):
-        pass
+    with pytest.raises(WebSocketDisconnect) as refused, client.websocket_connect("/api/sessions/ws", headers=ORIGIN) as ws:
+        ws.receive_text()
     assert refused.value.code == 4400
 
 

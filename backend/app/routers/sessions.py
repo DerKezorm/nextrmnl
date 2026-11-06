@@ -1,8 +1,8 @@
 """Live sessions: the terminal WebSocket, the list of running sessions, the history, and SFTP on a session.
 
 The WebSocket is authenticated by hand (``deps.websocket_account``): a browser sends the cookie with a cross-site
-WebSocket handshake without asking, so the Origin must match the Host, and an unauthenticated handshake is
-closed with 4401 before anything else happens. The HTTP routes use the usual dependencies.
+WebSocket handshake without asking, so the Origin must match the Host (else 4403), and an unauthenticated
+handshake is closed with 4401 before anything else happens. The HTTP routes use the usual dependencies.
 
 Uploads are streamed part by part from the multipart body straight into the SFTP file; nothing is spooled to disk
 or held in memory, so a 4 GB file costs 4 GB of network and nothing else.
@@ -27,7 +27,7 @@ from python_multipart.multipart import MultipartParser, parse_options_header
 from sqlalchemy import select
 
 from ..db import SessionLocal
-from ..deps import CurrentAccount, DbSession, client_ip, websocket_account
+from ..deps import CurrentAccount, DbSession, client_ip, origin_hosts, websocket_account
 from ..meldungen import fehler
 from ..models import OPERATOR, Account, SessionRecord
 from ..security import SESSION_COOKIE
@@ -37,14 +37,28 @@ logger = logging.getLogger("nextrmnl.ssh")
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 
-#: Close codes of the handshake, before the socket is accepted.
+#: Close codes of a refused handshake (see ``_refuse``).
 WS_UNAUTHORIZED = 4401
 WS_BAD_REQUEST = 4400
+WS_FOREIGN_ORIGIN = 4403
 WS_NOT_FOUND = 4404
 WS_TOO_MANY = 4429
 UPLOAD_LIMIT = 4 * 1024 * 1024 * 1024
 MAX_COLS = 1000
 MAX_ROWS = 1000
+
+
+async def _refuse(websocket: WebSocket, code: int, line: str, *args: object, level: int = logging.INFO) -> None:
+    """Refuses a handshake so that the browser learns why, and says so in the log.
+
+    Closing before ``accept`` turns into a bare HTTP 403 under uvicorn, and a browser reports that as 1006 with
+    no code: every refusal read as a lost connection. So the socket is accepted and closed at once with the
+    code. Nothing is sent before the close frame.
+    """
+    logger.log(level, line, *args)
+    with suppress(Exception):
+        await websocket.accept()
+        await websocket.close(code=code)
 
 
 def _clamp(value: int, upper: int, default: int) -> int:
@@ -81,26 +95,44 @@ async def terminal(
     or 4400.
     """
     with SessionLocal() as db:
+        # The Origin comes first: a foreign page learns the same 4403 whether anybody is signed in or not.
+        origin, expected = origin_hosts(websocket, db)
+        if not origin or origin not in expected:
+            await _refuse(
+                websocket,
+                WS_FOREIGN_ORIGIN,
+                "Terminal refused: the page came from an address nextrmnl does not know origin=%s expected=%s",
+                origin[:200] or "-",
+                ",".join(sorted(expected))[:500] or "-",
+                level=logging.WARNING,
+            )
+            return
         account = websocket_account(websocket, db)
         if account is None:
-            await websocket.close(code=WS_UNAUTHORIZED)
+            await _refuse(websocket, WS_UNAUTHORIZED, "Terminal refused: not signed in")
             return
         if attach is not None:
             account_id, account_name = account.id, account.name
         elif connection_id is not None:
             row = ssh._accessible(db, account, connection_id)
             if row is None:
-                await websocket.close(code=WS_NOT_FOUND)
+                await _refuse(
+                    websocket, WS_NOT_FOUND, "Terminal refused: connection not visible connection=%s", connection_id
+                )
                 return
             try:
                 target = ssh.target_from_connection(db, account, row)
             except (LookupError, ValueError):
-                await websocket.close(code=WS_NOT_FOUND)
+                await _refuse(
+                    websocket, WS_NOT_FOUND, "Terminal refused: connection unusable connection=%s", connection_id
+                )
                 return
         else:
             quick = _quick_target(host, port, user)
             if quick is None:
-                await websocket.close(code=WS_BAD_REQUEST)
+                await _refuse(
+                    websocket, WS_BAD_REQUEST, "Terminal refused: quick connect without a usable host or user"
+                )
                 return
             target = quick
         # The ORM row is not used after this point; copy what the session needs before the DB session ends.
@@ -109,7 +141,7 @@ async def terminal(
         await _attach(websocket, attach, account_id, account_name, have)
         return
     if ssh.count_for(holder.id) >= ssh.MAX_SESSIONS_PER_ACCOUNT:
-        await websocket.close(code=WS_TOO_MANY)
+        await _refuse(websocket, WS_TOO_MANY, "Terminal refused: too many sessions account=%s", holder.name)
         return
     await websocket.accept()
     size = (_clamp(cols, MAX_COLS, 80), _clamp(rows, MAX_ROWS, 24))
@@ -147,14 +179,14 @@ async def _run(session: ssh.SshSession, websocket: WebSocket, account_name: str)
         logger.exception("Session handler failed account=%s", account_name)
 
 
-async def _attach(
-    websocket: WebSocket, session_id: str, account_id: int, account_name: str, have: int | None
-) -> None:
+async def _attach(websocket: WebSocket, session_id: str, account_id: int, account_name: str, have: int | None) -> None:
     """Only the account that opened a session may take it back; for the operator too, a foreign shell is not
     theirs to type into."""
     session = ssh.get(session_id)
     if session is None or session.account_id != account_id or session.opened_at is None:
-        await websocket.close(code=WS_NOT_FOUND)
+        await _refuse(
+            websocket, WS_NOT_FOUND, "Terminal refused: session to take back is gone account=%s", account_name
+        )
         return
     await websocket.accept()
     try:

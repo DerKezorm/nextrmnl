@@ -92,9 +92,9 @@ def test_a_websocket_from_the_public_address_passes_the_origin_check(
     cid = make_connection(client, sshd, "ask")
     headers = {"origin": PUBLIC}
     # Not the public address yet: a foreign origin like any other.
-    with pytest.raises(WebSocketDisconnect) as refused, client.websocket_connect(ws_url(cid), headers=headers):
-        pass
-    assert refused.value.code == 4401
+    with pytest.raises(WebSocketDisconnect) as refused, client.websocket_connect(ws_url(cid), headers=headers) as ws:
+        ws.receive_text()
+    assert refused.value.code == 4403
 
     assert set_public_url(client, PUBLIC).status_code == 200
     with client.websocket_connect(ws_url(cid), headers=headers) as websocket:

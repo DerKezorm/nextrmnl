@@ -48,7 +48,7 @@ describe('translation keys used in the code', () => {
       'edit.sharedOwnAccess',
       ...['backups', 'restore'].flatMap((area) => [`${area}.tooNew`, `${area}.unknownVersion`]),
       // The failure reasons the server names while connecting; `terminal.fail.other` catches the rest.
-      ...['target_not_allowed', 'vault_locked', 'timeout', 'unreachable', 'auth_failed', 'not_signed_in', 'connection_lost', 'disconnected_by_operator', 'other'].map((detail) => `terminal.fail.${detail}`),
+      ...['target_not_allowed', 'vault_locked', 'timeout', 'unreachable', 'auth_failed', 'not_signed_in', 'connection_lost', 'disconnected_by_operator', 'other', 'bad_target', 'connection_not_found', 'foreign_origin', 'socket_failed', 'too_many_sessions'].map((detail) => `terminal.fail.${detail}`),
       // The server's error codes, which the UI translates into sentences.
       ...['not_signed_in', 'wrong_credentials', 'account_locked', 'vault_locked', 'password_too_short', 'target_not_allowed', 'oidc_not_configured', 'oidc_only_account', 'account_blocked', 'invite_invalid', 'provider_first'].map((code) => `errors.byCode.${code}`),
     ]

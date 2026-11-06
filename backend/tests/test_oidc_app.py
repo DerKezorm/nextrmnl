@@ -440,8 +440,8 @@ def _terminal_socket_code(browser: TestClient) -> int:
     """The close code the terminal WebSocket answers this session (a connection that does not exist, so that a
     session let through ends on "not found" and one held back ends on "not signed in")."""
     address = "/api/sessions/ws?connection_id=999999"
-    with pytest.raises(WebSocketDisconnect) as stopped, browser.websocket_connect(address, headers=ORIGIN):
-        pass
+    with pytest.raises(WebSocketDisconnect) as stopped, browser.websocket_connect(address, headers=ORIGIN) as ws:
+        ws.receive_text()
     return int(stopped.value.code)
 
 

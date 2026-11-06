@@ -700,7 +700,12 @@
       "vault_locked": "Der Tresor ist gesperrt. Öffne ihn und verbinde neu.",
       "access_ended": "Die Freigabe für diese Verbindung ist abgelaufen oder wurde entzogen.",
       "signed_out": "Die Anmeldung dahinter ist beendet, die Sitzung auch.",
-      "too_many_attempts": "Zu viele abgelehnte Anmeldungen hintereinander. Kurz warten, dann neu verbinden."
+      "too_many_attempts": "Zu viele abgelehnte Anmeldungen hintereinander. Kurz warten, dann neu verbinden.",
+      "bad_target": "Nicht verbunden: Rechner oder Benutzer fehlt oder taugt nicht.",
+      "connection_not_found": "Diese Verbindung gibt es nicht mehr, oder sie ist nicht mehr für dich freigegeben.",
+      "foreign_origin": "nextrmnl hat das Terminal abgelehnt: Diese Seite kam von einer Adresse, die es nicht kennt. Hinter einem Reverse Proxy den ursprünglichen Host-Kopf oder X-Forwarded-Host weitergeben, oder diese Adresse als öffentliche Adresse eintragen (Einstellungen, Anmeldung). Das Protokoll nennt beide Adressen.",
+      "socket_failed": "Die Terminal-Verbindung zu nextrmnl ließ sich nicht öffnen. Ein Reverse Proxy vor nextrmnl muss WebSockets durchlassen.",
+      "too_many_sessions": "Zu viele offene Sitzungen für dieses Konto. Schließ eine, dann neu verbinden."
     },
     "latency": "{{ms}} ms",
     "reconnectHint": "Enter verbindet neu.",

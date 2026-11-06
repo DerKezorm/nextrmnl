@@ -333,10 +333,11 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       )
       // After connecting, "last used" is new, and a host key may have been added.
       if (info.state === 'open') void reloadConnections()
-      // The browser only shows a rejected handshake as 1006, without the reason. Usually the
-      // sign-in has expired; asking the server then shows the sign-in page.
+      // An expired sign-in: asking the server then shows the sign-in page. A socket without any answer may be
+      // one too, behind a proxy that turns the refusal into an error page.
       // The same for a locked vault: after a server restart it is locked, and the UI does not know it yet.
-      if (info.state === 'failed' && (info.detail === 'connection_lost' || info.detail === 'vault_locked')) void refresh()
+      const recheck = ['not_signed_in', 'connection_lost', 'socket_failed', 'vault_locked']
+      if (info.state === 'failed' && recheck.includes(info.detail ?? '')) void refresh()
     },
     [reloadConnections, refresh],
   )

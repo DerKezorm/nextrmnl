@@ -16,6 +16,7 @@ import { SearchAddon } from '@xterm/addon-search'
 import { Terminal } from '@xterm/xterm'
 
 import { readClipboard, writeClipboard } from './clipboard'
+import { refusalDetail } from './refusal'
 import { fontStack, PREFS_EVENT, terminalPrefs } from './terminalPrefs'
 import { terminalTheme } from './terminalTheme'
 import { THEME_EVENT } from './theme'
@@ -378,6 +379,10 @@ export function getTerminal(sessionId: string, target: Target, texts: TerminalTe
     setStatus({ state: 'connecting' })
     term.write(`${DIM}${texts.connecting(target.label)}${RESET}\r\n`)
     const socket = openSocket(socketUrl(target, term.cols, term.rows))
+    let opened = false
+    socket.onopen = () => {
+      opened = true
+    }
     socket.onclose = (event) => {
       if (entry.socket !== socket) return
       entry.socket = null
@@ -389,7 +394,7 @@ export function getTerminal(sessionId: string, target: Target, texts: TerminalTe
         term.write(`\r\n${DIM}${texts.closed} ${texts.reconnectHint}${RESET}\r\n`)
         setStatus({ state: 'closed' })
       } else if (entry.status === 'connecting') {
-        const detail = event.code === 4401 ? 'not_signed_in' : 'connection_lost'
+        const detail = refusalDetail(event.code, opened)
         term.write(`${RED}${texts.failed(detail)}${RESET}\r\n${DIM}${texts.reconnectHint}${RESET}\r\n`)
         setStatus({ state: 'failed', detail })
       }
@@ -404,8 +409,8 @@ export function getTerminal(sessionId: string, target: Target, texts: TerminalTe
     socket.onclose = (event) => {
       if (entry.socket !== socket) return
       entry.socket = null
-      if (event.code === 4401) {
-        failAndOfferNew('not_signed_in')
+      if (event.code === 4401 || event.code === 4403) {
+        failAndOfferNew(refusalDetail(event.code, true))
       } else if (event.code === 4404) {
         // Gone meanwhile: it ended, or nobody came back in time. Enter starts a new one.
         entry.serverId = null

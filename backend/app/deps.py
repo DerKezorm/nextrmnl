@@ -188,17 +188,15 @@ SessionToken = Annotated[str | None, Depends(session_token)]
 OperatorAccount = Annotated[Account, Depends(operator_account)]
 
 
-def same_origin(websocket: WebSocket, db: Session) -> bool:
-    """The Origin of the handshake must be the host the browser talked to.
+def origin_hosts(websocket: WebSocket, db: Session) -> tuple[str, set[str]]:
+    """The host in the Origin of the handshake (empty without one) and the hosts it may name.
 
     Behind a reverse proxy the Host header often names the proxy's upstream, so the original host is also
     accepted from ``X-Forwarded-Host`` and from the public address (the setting, else ``NEXTRMNL_PUBLIC_URL``).
     A browser cannot set any of these headers itself, which is what makes the check worth anything.
     """
     origin = websocket.headers.get("origin", "")
-    if not origin:
-        return False
-    origin_host = origin.split("://", 1)[-1].split("/", 1)[0].lower()
+    origin_host = origin.split("://", 1)[-1].split("/", 1)[0].lower() if origin else ""
     candidates = {websocket.headers.get("host", "").lower()}
     forwarded = websocket.headers.get("x-forwarded-host", "")
     if forwarded:
@@ -207,7 +205,13 @@ def same_origin(websocket: WebSocket, db: Session) -> bool:
     if public:
         candidates.add(public.split("://", 1)[-1].split("/", 1)[0].lower())
     candidates.discard("")
-    return origin_host in candidates
+    return origin_host, candidates
+
+
+def same_origin(websocket: WebSocket, db: Session) -> bool:
+    """The Origin of the handshake must be the host the browser talked to (see ``origin_hosts``)."""
+    origin_host, candidates = origin_hosts(websocket, db)
+    return bool(origin_host) and origin_host in candidates
 
 
 def websocket_account(websocket: WebSocket, db: Session) -> Account | None:

@@ -2,11 +2,16 @@
 <html lang="de">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/logo.svg" />
+    <!--
+      ?v=2 since the new mark (0.6.0): browsers had kept the old icons, served without a cache header, and
+      kept showing them. A new address passes that entry by. Raise the number with a new mark, here and in
+      the manifest.
+    -->
+    <link rel="icon" type="image/svg+xml" href="/logo.svg?v=2" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#0b0b0f" />
     <link rel="manifest" href="/manifest.json" />
-    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=2" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
     <title>nextrmnl</title>

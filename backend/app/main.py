@@ -187,6 +187,15 @@ for module in ROUTERS:
 oidc_store.configure()
 
 
+#: Files a browser asks the server about again each time: the mark, the icons, the manifest and the theme script. Kept
+#: ones put the old mark on a freshly installed web app (seen with a sister app after its new icon).
+#: test_frontend_files.py checks that every file at the top of frontend/public is listed.
+ALWAYS_ASK = frozenset(
+    {"logo.svg", "icon-192.png", "icon-512.png", "icon-maskable-512.png", "apple-touch-icon.png"}
+    | {"manifest.json", "theme.js"}
+)
+
+
 def _mount_frontend(target: FastAPI, dist: Path) -> None:
     index = dist / "index.html"
     if not index.exists():
@@ -202,6 +211,8 @@ def _mount_frontend(target: FastAPI, dist: Path) -> None:
             return JSONResponse(status_code=404, content={"detail": meldung("not_found", "Not found.")})
         candidate = (dist / path).resolve()
         if path and candidate.is_file() and root in candidate.parents and candidate != start_page:
+            if path in ALWAYS_ASK:
+                return FileResponse(candidate, headers={"Cache-Control": "no-cache"})
             return FileResponse(candidate)
         return FileResponse(index, headers={"Cache-Control": "no-cache"})
 

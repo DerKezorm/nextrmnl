@@ -140,3 +140,25 @@
 .nt-terminal .xterm .xterm-viewport {
   background-color: var(--color-term-bg);
 }
+
+/* The colours of the mark (components/Logo.tsx), dark version first (nextrmnl starts dark). The same values are in
+   public/logo.svg and scripts/app-icons.mjs. */
+:root {
+  --nt-logo-grund: #110d1a;
+  --nt-logo-rand: #a78bfa;
+  --nt-logo-rand-deckung: 0.45;
+  --nt-logo-verlauf-1: #ede9fe;
+  --nt-logo-verlauf-2: #a78bfa;
+  --nt-logo-verlauf-3: #7c3aed;
+  --nt-logo-cursor: #c4b5fd;
+}
+
+:root[data-theme='light'] {
+  --nt-logo-grund: #ffffff;
+  --nt-logo-rand: #8b5cf6;
+  --nt-logo-rand-deckung: 0.35;
+  --nt-logo-verlauf-1: #c4b5fd;
+  --nt-logo-verlauf-2: #8b5cf6;
+  --nt-logo-verlauf-3: #4c1d95;
+  --nt-logo-cursor: #7c3aed;
+}
